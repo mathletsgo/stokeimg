@@ -27,20 +27,20 @@
       } catch (_e) {}
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=15" />
+  <link rel="stylesheet" href="style.css?v=20" />
 </head>
 <body>
   <!-- Cabeçalho ultra-compacto: recolhe título e filtros ao rolar para maximizar produtos na tela -->
   <header class="top-header" id="top-header">
     <div class="header-inner">
       <div class="brand-row" id="brand-row">
-        <div class="brand-title-group">
+        <a href="./" id="brand-home-link" class="brand-title-group" title="Voltar para o início" aria-label="BuscaSKU — Voltar para o início">
           <img src="logo.svg?v=7" alt="Logo BuscaSKU" class="brand-logo-img" width="34" height="34" />
           <div class="brand-wordmark-wrap">
             <h1 class="brand-title">BUSCA<span class="brand-title-accent">SKU</span></h1>
             <p class="brand-subtitle">Toque no tamanho p/ trocar • Foto abre QR</p>
           </div>
-        </div>
+        </a>
         <div class="brand-actions-right">
           <!-- Botão Modo Dark / Light -->
           <button
@@ -114,6 +114,15 @@
             aria-label="Limpar pesquisa"
             hidden
           >&times;</button>
+
+          <!-- Histórico de buscas recentes (aparece ao focar na barra vazia) -->
+          <div id="recent-searches-dropdown" class="recent-searches-dropdown" role="listbox" aria-label="Buscas recentes" hidden>
+            <div class="recent-searches-header">
+              <span class="recent-searches-title">Buscas recentes</span>
+              <button type="button" id="clear-recent-searches-btn" class="recent-searches-clear">Limpar</button>
+            </div>
+            <div id="recent-searches-list" class="recent-searches-list"></div>
+          </div>
         </form>
 
         <!-- Seta que ao clicar desce/sobe o painel de filtros -->
@@ -273,7 +282,11 @@
       <button type="button" id="qr-modal-pin-btn" class="qr-modal-pin-btn" aria-label="Fixar produto no balcão" title="Fixar / desafixar nos itens de balcão">☆</button>
       <button type="button" id="qr-modal-close" class="qr-modal-close" aria-label="Fechar QR Code">&times;</button>
       <span class="qr-modal-tag">QR Code do Produto</span>
-      <div id="qr-canvas-box" class="qr-canvas-box" aria-live="polite"></div>
+      <div id="qr-canvas-box" class="qr-canvas-box" aria-live="polite" title="Use o scroll do mouse ou pinça para dar zoom"></div>
+      <div class="qr-zoom-hint-row">
+        <span id="qr-zoom-label" class="qr-zoom-label">Scroll ou pinça p/ zoom (100%)</span>
+        <button type="button" id="qr-zoom-reset-btn" class="qr-zoom-reset-btn" hidden>Resetar</button>
+      </div>
 
       <button type="button" id="qr-modal-sku-btn" class="qr-modal-sku-btn" title="Toque para copiar o código">
         <span id="qr-modal-sku-code" class="qr-modal-sku-code"></span>
@@ -283,6 +296,18 @@
       <h3 id="qr-modal-title" class="qr-modal-product-name"></h3>
       <p id="qr-modal-meta" class="qr-modal-product-meta"></p>
 
+      <!-- Seletor rápido de Cor e Tamanho dentro do próprio modal de QR -->
+      <div id="qr-modal-variants" class="qr-modal-variants" hidden>
+        <div id="qr-modal-colors-row" class="qr-variants-row" hidden>
+          <span class="qr-variants-label">Cor:</span>
+          <div id="qr-modal-colors-list" class="qr-variants-chips"></div>
+        </div>
+        <div id="qr-modal-sizes-row" class="qr-variants-row" hidden>
+          <span class="qr-variants-label">Tamanho:</span>
+          <div id="qr-modal-sizes-list" class="qr-variants-chips"></div>
+        </div>
+      </div>
+
       <div class="qr-modal-actions">
         <a
           id="qr-centauro-link"
@@ -291,7 +316,7 @@
           target="_blank"
           rel="noopener noreferrer"
         >
-          <span>Ver na loja oficial Centauro</span>
+          <span>Ver no site</span>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
             <polyline points="15 3 21 3 21 9"></polyline>
@@ -309,8 +334,8 @@
   <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
 
   <!-- Módulos da aplicação -->
-  <script src="catalogo.js?v=15"></script>
-  <script src="qrcode.js?v=15"></script>
-  <script src="app.js?v=15"></script>
+  <script src="catalogo.js?v=17"></script>
+  <script src="qrcode.js?v=17"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

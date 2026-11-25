@@ -30,7 +30,37 @@
   const STORAGE_RECENT_KEY = "cent_sku_recent_v1";
   const STORAGE_GROUP_MODE_KEY = "cent_sku_group_mode_v1";
   const STORAGE_THEME_KEY = "cent_sku_theme_v1";
+  const STORAGE_LAST_SUGGESTIONS_KEY = "cent_sku_last_suggestions_v1";
+  const STORAGE_RECENT_SEARCHES_KEY = "cent_sku_recent_searches_v1";
   const MAX_RECENT_ITEMS = 10;
+  const MAX_RECENT_SEARCHES = 6;
+
+  const QUICK_SUGGESTIONS_POOL = [
+    "camiseta nike azul M",
+    "tenis adidas feminino",
+    "chuteira infantil",
+    "bermuda oxer G",
+    "tenis nike masculino",
+    "legging feminina preta",
+    "mochila nike preta",
+    "meia adidas",
+    "jaqueta puma masculina",
+    "camisa flamengo",
+    "tenis olympikus feminino",
+    "tenis asics masculino",
+    "chuteira futsal nike",
+    "chinelo adidas slide",
+    "bone nike preto",
+    "bola de futebol penalty",
+    "regata oxer feminina",
+    "short nike masculino",
+    "tenis mizuno masculino",
+    "tenis fila feminino",
+    "blusao moletom adidas",
+    "camiseta under armour",
+    "calca jogger oxer",
+    "tenis infantil masculino",
+  ];
 
   function getBatchSize() {
     return typeof window !== "undefined" && window.innerWidth < 860 ? 24 : 48;
@@ -45,27 +75,34 @@
   let allProducts = [];
   let productBySku = new Map();
   let siblingsByBase8 = new Map();
+  let siblingsByBase6 = new Map();
   let displayEntries = []; // No Modo Grade: [{ variants, defaultVariant }] | Individual: [{ variants:[p], defaultVariant:p }]
   let renderedCount = 0;
   let isGroupMode = true;
   let pinnedSkus = [];
   let recentSkus = [];
+  let recentSearches = [];
   let debounceTimer = null;
   let toastTimer = null;
   let scrollObserver = null;
   let activeQrProduct = null;
+  let qrZoomScale = 1;
   let isFiltersDrawerOpen = false;
   let lastScrollY = 0;
   let ignoreScrollUntil = 0;
 
   const els = {
     topHeader: document.getElementById("top-header"),
+    brandHomeLink: document.getElementById("brand-home-link"),
     themeToggleBtn: document.getElementById("theme-toggle-btn"),
     metaThemeColor: document.getElementById("meta-theme-color"),
     toggleGroupModeBtn: document.getElementById("toggle-group-mode-btn"),
     searchForm: document.getElementById("search-form"),
     searchInput: document.getElementById("search-input"),
     clearSearchBtn: document.getElementById("clear-search-btn"),
+    recentSearchesDropdown: document.getElementById("recent-searches-dropdown"),
+    recentSearchesList: document.getElementById("recent-searches-list"),
+    clearRecentSearchesBtn: document.getElementById("clear-recent-searches-btn"),
     toggleFiltersBtn: document.getElementById("toggle-filters-btn"),
     activeFilterDot: document.getElementById("active-filter-dot"),
     filtersDrawer: document.getElementById("filters-drawer"),
@@ -104,10 +141,17 @@
     qrModalPinBtn: document.getElementById("qr-modal-pin-btn"),
     qrModalClose: document.getElementById("qr-modal-close"),
     qrCanvasBox: document.getElementById("qr-canvas-box"),
+    qrZoomLabel: document.getElementById("qr-zoom-label"),
+    qrZoomResetBtn: document.getElementById("qr-zoom-reset-btn"),
     qrModalSkuBtn: document.getElementById("qr-modal-sku-btn"),
     qrModalSkuCode: document.getElementById("qr-modal-sku-code"),
     qrModalTitle: document.getElementById("qr-modal-title"),
     qrModalMeta: document.getElementById("qr-modal-meta"),
+    qrModalVariants: document.getElementById("qr-modal-variants"),
+    qrModalColorsRow: document.getElementById("qr-modal-colors-row"),
+    qrModalColorsList: document.getElementById("qr-modal-colors-list"),
+    qrModalSizesRow: document.getElementById("qr-modal-sizes-row"),
+    qrModalSizesList: document.getElementById("qr-modal-sizes-list"),
     qrCentauroLink: document.getElementById("qr-centauro-link"),
     qrDownloadBtn: document.getElementById("qr-download-btn"),
     copyToast: document.getElementById("copy-toast"),
@@ -145,6 +189,9 @@
     const savedRecent = readStorageJson(STORAGE_RECENT_KEY, []);
     recentSkus = Array.isArray(savedRecent) ? savedRecent : [];
 
+    const savedSearches = readStorageJson(STORAGE_RECENT_SEARCHES_KEY, []);
+    recentSearches = Array.isArray(savedSearches) ? savedSearches.filter((s) => typeof s === "string" && s.trim()) : [];
+
     const savedMode = readStorageJson(STORAGE_GROUP_MODE_KEY, true);
     isGroupMode = savedMode !== false;
     syncGroupModeButton();
@@ -177,6 +224,80 @@
     if (!codigo) return;
     recentSkus = [codigo].concat(recentSkus.filter((s) => s !== codigo)).slice(0, MAX_RECENT_ITEMS);
     writeStorageJson(STORAGE_RECENT_KEY, recentSkus);
+  }
+
+  function recordRecentSearch(rawQuery) {
+    const clean = String(rawQuery || "").trim().replace(/\s+/g, " ");
+    if (clean.length < 2) return;
+    const normNew = normalizeText(clean);
+    recentSearches = [clean]
+      .concat(recentSearches.filter((q) => normalizeText(q) !== normNew))
+      .slice(0, MAX_RECENT_SEARCHES);
+    writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, recentSearches);
+  }
+
+  function hideRecentSearchesDropdown() {
+    if (els.recentSearchesDropdown) {
+      els.recentSearchesDropdown.hidden = true;
+    }
+  }
+
+  function renderRecentSearchesDropdown() {
+    if (!els.recentSearchesDropdown || !els.recentSearchesList) return;
+    if (recentSearches.length === 0 || (els.searchInput && els.searchInput.value.trim().length > 0)) {
+      els.recentSearchesDropdown.hidden = true;
+      return;
+    }
+
+    els.recentSearchesList.innerHTML = "";
+    const frag = document.createDocumentFragment();
+
+    for (let i = 0; i < recentSearches.length; i++) {
+      const term = recentSearches[i];
+      const row = document.createElement("div");
+      row.className = "recent-search-item";
+
+      const selectBtn = document.createElement("button");
+      selectBtn.type = "button";
+      selectBtn.className = "recent-search-select-btn";
+      selectBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<circle cx="12" cy="12" r="9"></circle>' +
+        '<polyline points="12 7 12 12 15 15"></polyline>' +
+        "</svg>" +
+        '<span class="recent-search-text">' +
+        escapeHtml(term) +
+        "</span>";
+
+      selectBtn.addEventListener("click", function () {
+        els.searchInput.value = term;
+        recordRecentSearch(term);
+        hideRecentSearchesDropdown();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        executeSearch(false);
+        els.searchInput.blur();
+      });
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "recent-search-remove-btn";
+      removeBtn.setAttribute("aria-label", "Remover busca " + term);
+      removeBtn.title = "Remover";
+      removeBtn.textContent = "×";
+      removeBtn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        recentSearches = recentSearches.filter((q) => q !== term);
+        writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, recentSearches);
+        renderRecentSearchesDropdown();
+      });
+
+      row.appendChild(selectBtn);
+      row.appendChild(removeBtn);
+      frag.appendChild(row);
+    }
+
+    els.recentSearchesList.appendChild(frag);
+    els.recentSearchesDropdown.hidden = false;
   }
 
   /**
@@ -392,16 +513,27 @@
   function rebuildCatalogLookups() {
     productBySku = new Map();
     siblingsByBase8 = new Map();
+    siblingsByBase6 = new Map();
 
     for (let i = 0; i < allProducts.length; i++) {
       const p = allProducts[i];
       productBySku.set(p.codigo, p);
-      let group = siblingsByBase8.get(p.codigoBase8);
-      if (!group) {
-        group = [];
-        siblingsByBase8.set(p.codigoBase8, group);
+
+      let group8 = siblingsByBase8.get(p.codigoBase8);
+      if (!group8) {
+        group8 = [];
+        siblingsByBase8.set(p.codigoBase8, group8);
       }
-      group.push(p);
+      group8.push(p);
+
+      if (p.codigoBase6 && p.codigoBase6.length === 6) {
+        let group6 = siblingsByBase6.get(p.codigoBase6);
+        if (!group6) {
+          group6 = [];
+          siblingsByBase6.set(p.codigoBase6, group6);
+        }
+        group6.push(p);
+      }
     }
 
     // Ordena a grade de cada família de produto na sequência natural de tamanhos
@@ -1348,12 +1480,111 @@
     els.qrModalPinBtn.textContent = pinned ? "★" : "☆";
   }
 
-  function openQrModalForProduct(product) {
+  function setQrZoom(nextScale) {
+    const clamped = Math.min(2.2, Math.max(0.55, Math.round(nextScale * 100) / 100));
+    qrZoomScale = clamped;
+    if (els.qrCanvasBox) {
+      els.qrCanvasBox.style.setProperty("--qr-zoom", String(clamped));
+    }
+    const cardEl = els.qrModal ? els.qrModal.querySelector(".qr-modal-card") : null;
+    if (cardEl) {
+      cardEl.classList.toggle("is-qr-zoomed", clamped > 1.05);
+    }
+    const pct = Math.round(clamped * 100);
+    if (els.qrZoomLabel) {
+      els.qrZoomLabel.textContent =
+        pct === 100 ? "Scroll ou pinça p/ zoom (100%)" : "Zoom do QR: " + pct + "%";
+    }
+    if (els.qrZoomResetBtn) {
+      els.qrZoomResetBtn.hidden = pct === 100;
+    }
+  }
+
+  function renderQrModalVariants(product) {
+    if (!els.qrModalVariants) return;
+
+    // 1. Cores disponíveis no mesmo modelo (base 6 dígitos)
+    let colorEntries = [];
+    if (product.codigoBase6 && product.codigoBase6.length === 6) {
+      const allSameModel = siblingsByBase6.get(product.codigoBase6) || [];
+      const byBase8 = new Map();
+      for (let i = 0; i < allSameModel.length; i++) {
+        const item = allSameModel[i];
+        if (!byBase8.has(item.codigoBase8)) {
+          byBase8.set(item.codigoBase8, item);
+        }
+      }
+      if (byBase8.size > 1) {
+        colorEntries = Array.from(byBase8.entries()).map(([base8, sample]) => ({
+          base8,
+          label: sample.cor && sample.cor !== "-" ? sample.cor : base8.slice(6) || sample.codigo,
+        }));
+        colorEntries.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+      }
+    }
+
+    // 2. Tamanhos disponíveis na cor atual (base 8 dígitos)
+    const sizeVariants = siblingsByBase8.get(product.codigoBase8) || [product];
+    const hasColors = colorEntries.length > 1;
+    const hasSizes = sizeVariants.length > 1;
+
+    els.qrModalVariants.hidden = !hasColors && !hasSizes;
+
+    if (els.qrModalColorsRow && els.qrModalColorsList) {
+      els.qrModalColorsRow.hidden = !hasColors;
+      els.qrModalColorsList.innerHTML = "";
+      if (hasColors) {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < colorEntries.length; i++) {
+          const entry = colorEntries[i];
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "qr-variant-chip" + (entry.base8 === product.codigoBase8 ? " is-selected" : "");
+          btn.textContent = entry.label;
+          btn.addEventListener("click", function () {
+            const targetGroup = siblingsByBase8.get(entry.base8) || [];
+            const sameSizeMatch = targetGroup.find((v) => v.tamanho === product.tamanho);
+            const nextProd = sameSizeMatch || targetGroup[0];
+            if (nextProd) openQrModalForProduct(nextProd, true);
+          });
+          frag.appendChild(btn);
+        }
+        els.qrModalColorsList.appendChild(frag);
+      }
+    }
+
+    if (els.qrModalSizesRow && els.qrModalSizesList) {
+      els.qrModalSizesRow.hidden = !hasSizes;
+      els.qrModalSizesList.innerHTML = "";
+      if (hasSizes) {
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < sizeVariants.length; i++) {
+          const v = sizeVariants[i];
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "qr-variant-chip" + (v.codigo === product.codigo ? " is-selected" : "");
+          btn.textContent = v.tamanho;
+          btn.title = "Tam " + v.tamanho + " (" + v.codigo + ")";
+          btn.addEventListener("click", function () {
+            openQrModalForProduct(v, true);
+          });
+          frag.appendChild(btn);
+        }
+        els.qrModalSizesList.appendChild(frag);
+      }
+    }
+  }
+
+  function openQrModalForProduct(product, preserveZoom) {
     if (!els.qrModal || !window.QRCodeGenerator) return;
     activeQrProduct = product;
     recordRecentSku(product.codigo);
+    if (els.searchInput && els.searchInput.value.trim().length >= 2) {
+      recordRecentSearch(els.searchInput.value);
+    }
 
     els.qrCanvasBox.innerHTML = window.QRCodeGenerator.toSVGString(product.codigo, 4);
+    if (!preserveZoom) setQrZoom(1);
     els.qrModalSkuCode.textContent = product.codigo;
     els.qrModalTitle.textContent = product.nome;
     els.qrModalMeta.textContent =
@@ -1377,6 +1608,7 @@
         els.qrCentauroLink.hidden = true;
       }
     }
+    renderQrModalVariants(product);
     syncModalPinState();
 
     els.qrModal.hidden = false;
@@ -1462,6 +1694,9 @@
 
   async function copySkuToClipboard(codigo, btnEl) {
     recordRecentSku(codigo);
+    if (els.searchInput && els.searchInput.value.trim().length >= 2) {
+      recordRecentSearch(els.searchInput.value);
+    }
     let copiedOk = false;
 
     if (navigator.clipboard && window.isSecureContext) {
@@ -1891,6 +2126,19 @@
       els.searchInput.focus();
     }
 
+    // Clicar no logo ou nome BUSCASKU volta para o início do site
+    if (els.brandHomeLink) {
+      els.brandHomeLink.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        if (els.qrModal && !els.qrModal.hidden) closeQrModal();
+        if (isFiltersDrawerOpen) setFiltersDrawerOpen(false);
+        resetAllFiltersAndSearch();
+        ignoreScrollUntil = Date.now() + 450;
+        if (els.topHeader) els.topHeader.classList.remove("is-scrolled-down");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }
+
     // Alternar Modo Dark / Light
     if (els.themeToggleBtn) {
       els.themeToggleBtn.addEventListener("click", function () {
@@ -1935,17 +2183,47 @@
       els.searchForm.addEventListener("submit", function (ev) {
         ev.preventDefault();
         if (debounceTimer) clearTimeout(debounceTimer);
+        recordRecentSearch(els.searchInput.value);
+        hideRecentSearchesDropdown();
         executeSearch(false);
         els.searchInput.blur();
         if (isFiltersDrawerOpen) setFiltersDrawerOpen(false);
       });
     }
 
+    els.searchInput.addEventListener("focus", function () {
+      renderRecentSearchesDropdown();
+    });
+
     els.searchInput.addEventListener("input", function () {
+      if (els.searchInput.value.trim().length === 0) {
+        renderRecentSearchesDropdown();
+      } else {
+        hideRecentSearchesDropdown();
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         executeSearch(false);
       }, DEBOUNCE_MS);
+    });
+
+    if (els.clearRecentSearchesBtn) {
+      els.clearRecentSearchesBtn.addEventListener("click", function () {
+        recentSearches = [];
+        writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, []);
+        hideRecentSearchesDropdown();
+      });
+    }
+
+    document.addEventListener("click", function (ev) {
+      if (
+        els.recentSearchesDropdown &&
+        !els.recentSearchesDropdown.hidden &&
+        els.searchForm &&
+        !els.searchForm.contains(ev.target)
+      ) {
+        hideRecentSearchesDropdown();
+      }
     });
 
     els.clearSearchBtn.addEventListener("click", function () {
@@ -1953,6 +2231,7 @@
       els.searchInput.focus();
       if (debounceTimer) clearTimeout(debounceTimer);
       executeSearch(false);
+      renderRecentSearchesDropdown();
     });
 
     const onDropdownChange = function () {
@@ -1988,7 +2267,10 @@
       els.quickSuggestions.addEventListener("click", function (ev) {
         const pill = ev.target && ev.target.closest ? ev.target.closest(".suggestion-pill") : null;
         if (!pill) return;
-        els.searchInput.value = pill.getAttribute("data-query") || "";
+        const q = pill.getAttribute("data-query") || "";
+        els.searchInput.value = q;
+        recordRecentSearch(q);
+        hideRecentSearchesDropdown();
         executeSearch(false);
       });
     }
@@ -2075,6 +2357,73 @@
     }
     els.qrDownloadBtn.addEventListener("click", downloadActiveQrPng);
 
+    // Zoom no QR Code: scroll do mouse (desktop), pinça com 2 dedos (mobile) e duplo clique/toque
+    if (els.qrCanvasBox) {
+      let pinchStartDist = 0;
+      let pinchStartScale = 1;
+
+      const getTouchDistance = function (touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.hypot(dx, dy);
+      };
+
+      els.qrCanvasBox.addEventListener(
+        "wheel",
+        function (ev) {
+          if (!activeQrProduct) return;
+          ev.preventDefault();
+          const step = ev.deltaY < 0 ? 0.14 : -0.14;
+          setQrZoom(qrZoomScale + step);
+        },
+        { passive: false }
+      );
+
+      els.qrCanvasBox.addEventListener(
+        "touchstart",
+        function (ev) {
+          if (ev.touches.length === 2) {
+            ev.preventDefault();
+            pinchStartDist = getTouchDistance(ev.touches);
+            pinchStartScale = qrZoomScale;
+          }
+        },
+        { passive: false }
+      );
+
+      els.qrCanvasBox.addEventListener(
+        "touchmove",
+        function (ev) {
+          if (ev.touches.length === 2 && pinchStartDist > 0) {
+            ev.preventDefault();
+            const curDist = getTouchDistance(ev.touches);
+            setQrZoom(pinchStartScale * (curDist / pinchStartDist));
+          }
+        },
+        { passive: false }
+      );
+
+      els.qrCanvasBox.addEventListener("touchend", function (ev) {
+        if (ev.touches.length < 2) {
+          pinchStartDist = 0;
+        }
+      });
+
+      els.qrCanvasBox.addEventListener("touchcancel", function () {
+        pinchStartDist = 0;
+      });
+
+      els.qrCanvasBox.addEventListener("dblclick", function () {
+        setQrZoom(qrZoomScale > 1.05 ? 1 : 1.55);
+      });
+    }
+
+    if (els.qrZoomResetBtn) {
+      els.qrZoomResetBtn.addEventListener("click", function () {
+        setQrZoom(1);
+      });
+    }
+
     if (els.importCsvBtn && els.csvFileInput) {
       els.importCsvBtn.addEventListener("click", function () {
         els.csvFileInput.click();
@@ -2091,6 +2440,10 @@
 
     document.addEventListener("keydown", function (ev) {
       if (ev.key === "Escape") {
+        if (els.recentSearchesDropdown && !els.recentSearchesDropdown.hidden) {
+          hideRecentSearchesDropdown();
+          return;
+        }
         if (els.qrModal && !els.qrModal.hidden) {
           closeQrModal();
           return;
@@ -2135,8 +2488,44 @@
     setTimeout(nextSlice, 250);
   }
 
+  function renderRandomQuickSuggestions() {
+    if (!els.quickSuggestions) return;
+    const listEl = els.quickSuggestions.querySelector(".quick-suggestions-list");
+    if (!listEl) return;
+
+    const lastShown = readStorageJson(STORAGE_LAST_SUGGESTIONS_KEY, []);
+    const lastSet = new Set(Array.isArray(lastShown) ? lastShown : []);
+
+    // Prioriza exemplos que não apareceram na atualização anterior
+    const freshPool = QUICK_SUGGESTIONS_POOL.filter((q) => !lastSet.has(q));
+    const source = freshPool.length >= 4 ? freshPool.slice() : QUICK_SUGGESTIONS_POOL.slice();
+
+    for (let i = source.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = source[i];
+      source[i] = source[j];
+      source[j] = tmp;
+    }
+
+    const chosen = source.slice(0, 4);
+    writeStorageJson(STORAGE_LAST_SUGGESTIONS_KEY, chosen);
+
+    listEl.innerHTML = "";
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < chosen.length; i++) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "suggestion-pill";
+      btn.setAttribute("data-query", chosen[i]);
+      btn.textContent = chosen[i];
+      frag.appendChild(btn);
+    }
+    listEl.appendChild(frag);
+  }
+
   async function init() {
     loadUserPreferences();
+    renderRandomQuickSuggestions();
     setupEventListeners();
     try {
       await loadInitialCatalog();

@@ -27,7 +27,7 @@
       } catch (_e) {}
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=14" />
+  <link rel="stylesheet" href="style.css?v=15" />
 </head>
 <body>
   <!-- Cabeçalho ultra-compacto: recolhe título e filtros ao rolar para maximizar produtos na tela -->
@@ -284,6 +284,20 @@
       <p id="qr-modal-meta" class="qr-modal-product-meta"></p>
 
       <div class="qr-modal-actions">
+        <a
+          id="qr-centauro-link"
+          class="qr-centauro-btn"
+          href="https://www.centauro.com.br/"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <span>Ver na loja oficial Centauro</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <line x1="10" y1="14" x2="21" y2="3"></line>
+          </svg>
+        </a>
         <button type="button" id="qr-download-btn" class="qr-download-btn">
           Baixar etiqueta QR (PNG)
         </button>
@@ -295,8 +309,8 @@
   <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
 
   <!-- Módulos da aplicação -->
-  <script src="catalogo.js?v=13"></script>
-  <script src="qrcode.js?v=13"></script>
-  <script src="app.js?v=13"></script>
+  <script src="catalogo.js?v=15"></script>
+  <script src="qrcode.js?v=15"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>

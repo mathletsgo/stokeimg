@@ -108,6 +108,7 @@
     qrModalSkuCode: document.getElementById("qr-modal-sku-code"),
     qrModalTitle: document.getElementById("qr-modal-title"),
     qrModalMeta: document.getElementById("qr-modal-meta"),
+    qrCentauroLink: document.getElementById("qr-centauro-link"),
     qrDownloadBtn: document.getElementById("qr-download-btn"),
     copyToast: document.getElementById("copy-toast"),
   };
@@ -1367,6 +1368,15 @@
     els.qrModalSkuBtn.classList.remove("copied");
     const hint = els.qrModalSkuBtn.querySelector(".sku-action-hint");
     if (hint) hint.textContent = "Copiar";
+    if (els.qrCentauroLink) {
+      const ref6 = String(product.codigo || "").trim().slice(0, 6);
+      if (ref6) {
+        els.qrCentauroLink.href = "https://www.centauro.com.br/" + encodeURIComponent(ref6);
+        els.qrCentauroLink.hidden = false;
+      } else {
+        els.qrCentauroLink.hidden = true;
+      }
+    }
     syncModalPinState();
 
     els.qrModal.hidden = false;

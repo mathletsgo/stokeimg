@@ -3,9 +3,11 @@ node_modules/
 dist/
 .vercel/
 
-# Sigilo de inventário: ignora planilhas CSV brutas (que contêm QTD ESPERADA / CONTADA).
-# Apenas o "catalogo.js" já higienizado (sem quantidades) vai para o Git e Vercel!
+# Sigilo de inventário e vendas: ignora planilhas brutas (.csv e .xlsx).
+# Apenas o "catalogo.js" já higienizado (sem quantidades nem valores) vai para o Git e Vercel!
 *.csv
+*.xlsx
+*.xls
 
 # Arquivos de sistema
 .DS_Store

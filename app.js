@@ -224,7 +224,6 @@
     acessorios: new Set(["acessorio", "mochila", "bone", "bola", "bolsa", "mala", "luva", "garrafa", "squeeze", "pochete"]),
     "equipamentos leves": new Set(["equipamento", "raquete", "oculos", "touca", "natacao", "caneleira", "corda"]),
     "equipamentos pesados": new Set(["equipamento", "patinete", "patins", "peso", "halter", "caneleira", "esteira"]),
-    ativos: new Set(["ativo", "estante", "arara", "manequim", "expositor"]),
   };
 
   const SECTOR_SHORT_LABELS = {
@@ -232,9 +231,10 @@
     CALCADOS: "Calçados",
     ACESSORIOS: "Acessórios",
     MEIAS: "Meias",
+    ALIMENTOS: "Nutrição",
     "EQUIPAMENTOS LEVES": "Equip. Leves",
     "EQUIPAMENTOS PESADOS": "Equip. Pesados",
-    ATIVOS: "Ativos",
+    INSUMOS: "Insumos",
   };
 
   const KNOWN_BRANDS = [
@@ -314,7 +314,7 @@
     return Array.from(out);
   }
 
-  function createLightProduct(codigo, nome, modelo, marca, cor, tamanho, setor, categoria, publico) {
+  function createLightProduct(codigo, nome, modelo, marca, cor, tamanho, setor, categoria, publico, ean) {
     const codigoNorm = codigo.toLowerCase().trim();
     return {
       codigo,
@@ -326,8 +326,10 @@
       setor,
       categoria,
       publico: publico || "Unissex",
+      ean: ean || "",
       codigoNorm,
       codigoBase8: codigoNorm.length > 8 ? codigoNorm.slice(0, 8) : codigoNorm,
+      codigoBase6: codigoNorm.length >= 6 ? codigoNorm.slice(0, 6) : codigoNorm,
       _indexed: false,
       nomeNorm: "",
       modeloNorm: "",
@@ -426,7 +428,13 @@
     if (setorNorm === "meias" || /\b(meia|meiao|sapatilha pilates)\b/.test(text)) {
       return "Meias e Meiões";
     }
-    if (/\b(chuteira|futsal|society|vapor 1[567]|tiempo|phantom|predator|crazyfast|f50)\b/.test(text)) {
+    if (/\b(bola|luva|caneleira|joelheira|tornozeleira|munhequeira)\b/.test(text) && setorNorm !== "calcados") {
+      return "Bolas, Luvas e Proteção";
+    }
+    if (
+      firstWord === "chuteira" ||
+      (setorNorm === "calcados" && /\b(chuteira|futsal|society|vapor 1[567]|tiempo|phantom|predator|crazyfast|f50)\b/.test(text))
+    ) {
       return "Chuteiras";
     }
     if (/\b(chinelo|sandalia|slide|papete|babuche)\b/.test(text)) {
@@ -633,9 +641,11 @@
       const tamanho = raw.tamanho || "UNI";
       const setor = raw.setor || "OUTROS";
       const setorNorm = normalizeText(setor);
+      if (setorNorm === "ativos") continue;
       const nomeNorm = normalizeText(nome);
       const modeloNorm = normalizeText(modelo);
       const categoria = classifyProductCategory(setorNorm, nomeNorm, modeloNorm, raw.categoriaExplicita);
+      if (categoria === "Mobiliário e Ativos") continue;
       const publico = detectPublicoRuntime(setorNorm, nomeNorm, modeloNorm, tamanho);
 
       unified.push(
@@ -672,7 +682,8 @@
           d.tamanhos ? d.tamanhos[row[5]] : row[5],
           d.setores ? d.setores[row[6]] : row[6],
           d.categorias ? d.categorias[row[7]] : row[7],
-          publico
+          publico,
+          row[9] || ""
         );
       }
 
@@ -756,11 +767,14 @@
 
   function evaluateProductRelevance(product, queryTokens, compactQuery, wordScoreCaches) {
     if (compactQuery.length >= 4) {
-      if (product.codigoNorm === compactQuery) {
+      if (product.codigoNorm === compactQuery || (product.ean && product.ean === compactQuery)) {
         return { matchedCount: queryTokens.length, score: 10000 };
       }
       if (product.codigoBase8 === compactQuery) {
-        return { matchedCount: queryTokens.length, score: 8500 };
+        return { matchedCount: queryTokens.length, score: 9000 };
+      }
+      if (compactQuery.length === 6 && product.codigoBase6 === compactQuery) {
+        return { matchedCount: queryTokens.length, score: 8800 };
       }
     }
 
@@ -892,7 +906,7 @@
     if (!els.sectorQuickChips) return;
     const sectorOrder = [
       "VESTUARIO", "CALCADOS", "ACESSORIOS", "MEIAS",
-      "EQUIPAMENTOS LEVES", "EQUIPAMENTOS PESADOS", "ATIVOS",
+      "ALIMENTOS", "EQUIPAMENTOS LEVES", "EQUIPAMENTOS PESADOS",
     ];
     const present = new Set();
     for (let i = 0; i < allProducts.length; i++) {
@@ -1198,16 +1212,32 @@
     const sku = String(codigo || "").trim();
     if (!sku) return [];
 
-    const rawAttempts =
-      sku.length === 8
-        ? [sku]
-        : [
-            sku,
-            sku.length > 4 ? sku.slice(0, -4) : "",
-            sku.length > 3 ? sku.slice(0, -3) : "",
-            sku.length > 2 ? sku.slice(0, -2) : "",
-            sku.length > 1 ? sku.slice(0, -1) : "",
-          ];
+    let rawAttempts;
+    if (sku.length === 8) {
+      rawAttempts = [sku];
+    } else if (sku.length === 6) {
+      // Para códigos de 6 dígitos (referência do modelo sem cor), testa o código puro
+      // seguido dos sufixos de cor mais frequentes do padrão Centauro (02=Preto, 31=Preto/Branco, 01=Branco, 05=Marinho...)
+      rawAttempts = [
+        sku,
+        sku + "02",
+        sku + "31",
+        sku + "01",
+        sku + "05",
+        sku + "51",
+        sku + "07",
+        sku + "04",
+        sku + "12",
+      ];
+    } else {
+      rawAttempts = [
+        sku,
+        sku.length > 4 ? sku.slice(0, -4) : "",
+        sku.length > 3 ? sku.slice(0, -3) : "",
+        sku.length > 2 ? sku.slice(0, -2) : "",
+        sku.length > 1 ? sku.slice(0, -1) : "",
+      ];
+    }
 
     const seen = new Set();
     const urls = [];
@@ -1460,18 +1490,29 @@
 
     const hintEl = btnEl ? btnEl.querySelector(".sku-action-hint") : null;
     const originalHint = hintEl ? hintEl.dataset.defaultLabel || "Copiar" : "";
-    if (btnEl) btnEl.classList.add("copied");
+    if (btnEl) {
+      btnEl.classList.remove("is-pulsing");
+      void btnEl.offsetWidth;
+      btnEl.classList.add("copied", "is-pulsing");
+    }
     if (hintEl) hintEl.textContent = "✓ Copiado";
 
     if (btnEl) {
       if (btnEl._copyResetTimer) clearTimeout(btnEl._copyResetTimer);
       btnEl._copyResetTimer = setTimeout(() => {
-        btnEl.classList.remove("copied");
+        btnEl.classList.remove("copied", "is-pulsing");
         if (hintEl) hintEl.textContent = originalHint;
       }, 1500);
     }
 
     showToast("Código <strong>" + escapeHtml(codigo) + "</strong> copiado!");
+  }
+
+  function triggerStarPop(starEl) {
+    if (!starEl) return;
+    starEl.classList.remove("is-popping");
+    void starEl.offsetWidth;
+    starEl.classList.add("is-popping");
   }
 
   function escapeHtml(str) {
@@ -1517,7 +1558,7 @@
     skuBtn.title = "Toque para copiar o SKU";
     skuBtn.addEventListener("click", function () {
       copySkuToClipboard(product.codigo, skuBtn);
-      renderHomeHubLists();
+      setTimeout(renderHomeHubLists, 650);
     });
 
     const pinBtn = document.createElement("button");
@@ -1547,19 +1588,21 @@
   function renderHomeHubLists() {
     if (!els.pinnedSection || !els.recentSection || productBySku.size === 0) return;
 
-    // 1. Fixados (Itens de Balcão)
+    // 1. Fixados (Itens de Balcão) com entrada suave em cascata
     const validPinned = pinnedSkus.map((s) => productBySku.get(s)).filter(Boolean);
     els.pinnedSection.hidden = validPinned.length === 0;
     els.pinnedList.innerHTML = "";
     if (validPinned.length > 0) {
       const f = document.createDocumentFragment();
       for (let i = 0; i < validPinned.length; i++) {
-        f.appendChild(renderHomeMiniCard(validPinned[i]));
+        const card = renderHomeMiniCard(validPinned[i]);
+        card.style.setProperty("--stagger-delay", Math.min(i, 8) * 35 + "ms");
+        f.appendChild(card);
       }
       els.pinnedList.appendChild(f);
     }
 
-    // 2. Últimos Consultados (exclui os que já aparecem em Fixados para não repetir)
+    // 2. Últimos Consultados com entrada suave em cascata
     const pinnedSet = new Set(pinnedSkus);
     const validRecent = recentSkus
       .filter((s) => !pinnedSet.has(s))
@@ -1571,7 +1614,9 @@
     if (validRecent.length > 0) {
       const f = document.createDocumentFragment();
       for (let i = 0; i < validRecent.length; i++) {
-        f.appendChild(renderHomeMiniCard(validRecent[i]));
+        const card = renderHomeMiniCard(validRecent[i]);
+        card.style.setProperty("--stagger-delay", Math.min(i, 8) * 35 + "ms");
+        f.appendChild(card);
       }
       els.recentList.appendChild(f);
     }
@@ -1661,6 +1706,7 @@
     pinBtn.addEventListener("click", function () {
       const nowPinned = togglePinSku(currentVariant.codigo);
       refreshPinVisual();
+      if (nowPinned) triggerStarPop(pinBtn);
       showToast(nowPinned ? "Fixado nos Itens de Balcão ★" : "Removido dos Fixados");
     });
 
@@ -1699,8 +1745,11 @@
     skuValueEl.className = "sku-value";
     skuValueEl.textContent = currentVariant.codigo;
 
+    const isRef6 = currentVariant.codigo.length === 6;
     skuBtn.innerHTML =
-      '<span class="sku-code-wrap"><span class="sku-label-tiny">Código / SKU</span></span>' +
+      '<span class="sku-code-wrap"><span class="sku-label-tiny">' +
+      (isRef6 ? "Ref. Modelo (6 díg.)" : "Código / SKU") +
+      "</span></span>" +
       '<span class="sku-action-hint" data-default-label="Copiar">Copiar</span>';
     skuBtn.querySelector(".sku-code-wrap").appendChild(skuValueEl);
 
@@ -1803,7 +1852,10 @@
     const limit = Math.min(renderedCount + batchSize, displayEntries.length);
 
     for (let i = renderedCount; i < limit; i++) {
-      fragment.appendChild(createProductCard(displayEntries[i], i < 4));
+      const card = createProductCard(displayEntries[i], i < 4);
+      const batchOffset = i - renderedCount;
+      card.style.setProperty("--stagger-delay", Math.min(batchOffset, 10) * 38 + "ms");
+      fragment.appendChild(card);
     }
 
     els.productsGrid.appendChild(fragment);
@@ -1840,7 +1892,7 @@
           document.documentElement.removeAttribute("data-theme");
         }
         if (els.metaThemeColor) {
-          els.metaThemeColor.setAttribute("content", nextTheme === "dark" ? "#0b0f19" : "#d90429");
+          els.metaThemeColor.setAttribute("content", nextTheme === "dark" ? "#0f172a" : "#d90429");
         }
         try {
           if (window.localStorage) window.localStorage.setItem(STORAGE_THEME_KEY, nextTheme);
@@ -1933,40 +1985,63 @@
 
     els.loadMoreBtn.addEventListener("click", renderNextBatch);
 
-    // Recolhimento automático ao rolar a tela para baixo
+    // Recolhimento automático ao rolar a tela para baixo (com proteção contra bounce/corte no mobile)
     if (typeof window.addEventListener === "function") {
+      let scrollRafId = 0;
+
+      const handleScrollFrame = function () {
+        scrollRafId = 0;
+        const currentY = Math.max(0, window.scrollY || window.pageYOffset || 0);
+        const delta = currentY - lastScrollY;
+        const docHeight = document.documentElement.scrollHeight || 0;
+        const viewHeight = window.innerHeight || 0;
+        const maxScroll = Math.max(0, docHeight - viewHeight);
+        const isAtBottomBounce = maxScroll > 0 && currentY >= maxScroll - 24;
+
+        if (els.scrollTopSearchBtn) {
+          els.scrollTopSearchBtn.hidden = currentY < 480;
+        }
+
+        if (Date.now() > ignoreScrollUntil) {
+          const isCollapsed = Boolean(els.topHeader && els.topHeader.classList.contains("is-scrolled-down"));
+
+          // Só recolhe o cabeçalho quando há conteúdo suficiente para rolar sem causar salto/loop
+          if (delta > 16 && currentY > 56 && maxScroll > 160) {
+            if (isFiltersDrawerOpen) setFiltersDrawerOpen(false);
+            if (els.topHeader && !isCollapsed) {
+              els.topHeader.classList.add("is-scrolled-down");
+              ignoreScrollUntil = Date.now() + 300;
+            }
+          } else if (currentY <= 10 || (delta < -32 && !isAtBottomBounce)) {
+            if (els.topHeader && isCollapsed) {
+              els.topHeader.classList.remove("is-scrolled-down");
+              ignoreScrollUntil = Date.now() + 300;
+            }
+          }
+        }
+
+        lastScrollY = currentY;
+      };
+
       window.addEventListener(
         "scroll",
         function () {
-          const currentY = window.scrollY || 0;
-          const delta = currentY - lastScrollY;
-
-          if (els.scrollTopSearchBtn) {
-            els.scrollTopSearchBtn.hidden = currentY < 480;
+          if (!scrollRafId) {
+            scrollRafId = window.requestAnimationFrame(handleScrollFrame);
           }
-
-          if (Date.now() > ignoreScrollUntil) {
-            if (delta > 14 && currentY > 40) {
-              if (isFiltersDrawerOpen) setFiltersDrawerOpen(false);
-              if (els.topHeader) els.topHeader.classList.add("is-scrolled-down");
-            } else if (currentY <= 12 || delta < -28) {
-              if (els.topHeader) els.topHeader.classList.remove("is-scrolled-down");
-            }
-          }
-
-          lastScrollY = currentY;
         },
         { passive: true }
       );
 
       if (els.scrollTopSearchBtn) {
         els.scrollTopSearchBtn.addEventListener("click", function () {
+          ignoreScrollUntil = Date.now() + 450;
           window.scrollTo({ top: 0, behavior: "smooth" });
           if (els.topHeader) els.topHeader.classList.remove("is-scrolled-down");
           setTimeout(() => {
             els.searchInput.focus();
             els.searchInput.select();
-          }, 240);
+          }, 260);
         });
       }
     }
@@ -1984,6 +2059,7 @@
         if (!activeQrProduct) return;
         const nowPinned = togglePinSku(activeQrProduct.codigo);
         syncModalPinState();
+        if (nowPinned) triggerStarPop(els.qrModalPinBtn);
         showToast(nowPinned ? "Fixado nos Itens de Balcão ★" : "Removido dos Fixados");
       });
     }

@@ -12,6 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const ROOT_DIR = __dirname;
 
@@ -96,10 +97,22 @@ function classifyProductCategory(setorNorm, nomeNorm, modeloNorm, explicitCat) {
   if (setorNorm === "ativos" || /\b(estante|arara|manequim|expositor)\b/.test(text) || firstWord === "ca") {
     return "Mobiliário e Ativos";
   }
+  if (setorNorm === "alimentos" || /\b(nutricao|whey|creatina|barra|gel|isotonic|suplemento|proteina)\b/.test(text)) {
+    return "Suplementos e Nutrição";
+  }
+  if (setorNorm === "insumos" || /\b(embalagem|sacola)\b/.test(text)) {
+    return "Insumos e Embalagens";
+  }
   if (setorNorm === "meias" || /\b(meia|meiao|sapatilha pilates)\b/.test(text)) {
     return "Meias e Meiões";
   }
-  if (/\b(chuteira|futsal|society|vapor 1[567]|tiempo|phantom|predator|crazyfast|f50)\b/.test(text)) {
+  if (/\b(bola|luva|caneleira|joelheira|tornozeleira|munhequeira)\b/.test(text) && setorNorm !== "calcados") {
+    return "Bolas, Luvas e Proteção";
+  }
+  if (
+    firstWord === "chuteira" ||
+    (setorNorm === "calcados" && /\b(chuteira|futsal|society|vapor 1[567]|tiempo|phantom|predator|crazyfast|f50)\b/.test(text))
+  ) {
     return "Chuteiras";
   }
   if (/\b(chinelo|sandalia|slide|papete|babuche)\b/.test(text)) {
@@ -194,15 +207,285 @@ function parseCSV(csvText) {
   return rows;
 }
 
+/**
+ * Leitor nativo de arquivos Excel (.xlsx) sem dependências externas!
+ * Extrai entradas do diretório central ZIP com zlib.inflateRawSync e lê
+ * sharedStrings + sheet1.xml ignorando colunas financeiras/quantidades.
+ */
+function decodeXmlEntities(str) {
+  if (!str) return "";
+  return str
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(parseInt(dec, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function unzipXlsxEntries(buffer) {
+  const entries = new Map();
+  // Localiza End of Central Directory (0x06054b50) a partir do final do buffer
+  let eocdOffset = -1;
+  for (let i = buffer.length - 22; i >= Math.max(0, buffer.length - 65557); i--) {
+    if (buffer.readUInt32LE(i) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset === -1) return entries;
+
+  const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+  let cdOffset = buffer.readUInt32LE(eocdOffset + 16);
+
+  for (let e = 0; e < totalEntries; e++) {
+    if (buffer.readUInt32LE(cdOffset) !== 0x02014b50) break;
+    const method = buffer.readUInt16LE(cdOffset + 10);
+    const compSize = buffer.readUInt32LE(cdOffset + 20);
+    const nameLen = buffer.readUInt16LE(cdOffset + 28);
+    const extraLen = buffer.readUInt16LE(cdOffset + 30);
+    const commentLen = buffer.readUInt16LE(cdOffset + 32);
+    const localHeaderOffset = buffer.readUInt32LE(cdOffset + 42);
+    const fileName = buffer.slice(cdOffset + 46, cdOffset + 46 + nameLen).toString("utf8");
+
+    if (fileName === "xl/sharedStrings.xml" || /^xl\/worksheets\/sheet\d+\.xml$/i.test(fileName)) {
+      const lNameLen = buffer.readUInt16LE(localHeaderOffset + 26);
+      const lExtraLen = buffer.readUInt16LE(localHeaderOffset + 28);
+      const dataStart = localHeaderOffset + 30 + lNameLen + lExtraLen;
+      const slice = buffer.slice(dataStart, dataStart + compSize);
+      const content = method === 8 ? zlib.inflateRawSync(slice) : slice;
+      entries.set(fileName, content.toString("utf8"));
+    }
+
+    cdOffset += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+function excelColIndex(cellRef) {
+  if (!cellRef) return -1;
+  let col = 0;
+  let hasLetters = false;
+  for (let i = 0; i < cellRef.length; i++) {
+    const code = cellRef.charCodeAt(i);
+    if (code >= 65 && code <= 90) {
+      col = col * 26 + (code - 64);
+      hasLetters = true;
+    } else if (code >= 97 && code <= 122) {
+      col = col * 26 + (code - 96);
+      hasLetters = true;
+    } else {
+      break;
+    }
+  }
+  return hasLetters ? col - 1 : -1;
+}
+
+function cleanSapColor(rawCor) {
+  if (!rawCor) return "";
+  const stripped = rawCor.replace(/^[0-9A-Z]{1,4}\s*-\s*/i, "").trim().toUpperCase();
+  if (!stripped || stripped.startsWith("NAO SE APL")) return "UNICA";
+  return stripped;
+}
+
+function cleanSapSize(rawTam) {
+  if (!rawTam) return "";
+  const t = rawTam.trim().toUpperCase();
+  if (!t.includes(" - ")) return t;
+
+  const parts = t.split(/\s*-\s*/);
+  const code5 = parts[0].trim();
+  const desc = (parts.slice(1).join(" ") || "").trim();
+
+  if (desc.startsWith("NAO SE APL") || desc === "UNICO") return "UNI";
+  if (desc.startsWith("PEQUENO PE")) return "PP";
+  if (desc === "PEQUENO") return "P";
+  if (desc === "MEDIO") return "M";
+  if (desc.startsWith("GRANDE GRA")) return "GG";
+  if (desc === "GRANDE") return "G";
+  if (desc.startsWith("EXTRA GRAN")) return "XGG";
+  if (/^\d+\s*A\s*\d+$/.test(desc)) return desc.replace(/\s+/g, "");
+
+  // Numerações SAP tipo "00039 - TRINTA E N", "04039 - TRINTA E N", "68010 - DEZ", "00008 - OITO"
+  if (/^\d{5}$/.test(code5) && code5[2] === "0") {
+    const num = parseInt(code5.slice(3), 10);
+    if (num >= 1 && num <= 52) return String(num);
+  }
+  if (/^\d+(\.\d+)?$/.test(desc)) return desc;
+  return desc.slice(0, 8) || "UNI";
+}
+
+function cleanSapSectorAndModality(rawGrupo, rawCat) {
+  let setor = (rawGrupo || "").trim().toUpperCase();
+  let modalidade = (rawCat || "").trim().toUpperCase();
+  if (setor.includes(" - ")) {
+    const gp = setor.split(/\s*-\s*/);
+    if (!modalidade) modalidade = gp[0].trim();
+    setor = gp[gp.length - 1].trim();
+  }
+  if (setor === "ALIMENTO") setor = "ALIMENTOS";
+  if (setor === "EQUIPAMENTOS" || setor === "EQUIPAMENTO") setor = "EQUIPAMENTOS LEVES";
+  if (setor === "EMBALAGENS" || setor === "EMBALAGEM") setor = "INSUMOS";
+  return { setor, modalidade };
+}
+
+function parseXLSXFile(filePath) {
+  const buf = fs.readFileSync(filePath);
+  const xmlMap = unzipXlsxEntries(buf);
+
+  const sharedStrings = [];
+  const sharedXml = xmlMap.get("xl/sharedStrings.xml");
+  if (sharedXml) {
+    const siRegex = /<(?:\w+:)?si\b[^>]*>([\s\S]*?)<\/(?:\w+:)?si>/g;
+    let siMatch;
+    while ((siMatch = siRegex.exec(sharedXml)) !== null) {
+      let text = "";
+      const tRegex = /<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g;
+      let tMatch;
+      while ((tMatch = tRegex.exec(siMatch[1])) !== null) {
+        text += decodeXmlEntities(tMatch[1]);
+      }
+      sharedStrings.push(text);
+    }
+  }
+
+  const CLASSE_TO_PUBLICO = {
+    "0001": "Masculino",
+    "0002": "Feminino",
+    "0003": "Infantil",
+    "0004": "Infantil",
+    "0005": "Unissex",
+  };
+
+  const GENERO_TO_PUBLICO = {
+    MASCULINO: "Masculino",
+    FEMININO: "Feminino",
+    INFANTIL: "Infantil",
+    UNISSEX: "Unissex",
+  };
+
+  const allRecords = [];
+  const sheetNames = Array.from(xmlMap.keys())
+    .filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(k))
+    .sort();
+
+  for (const sheetKey of sheetNames) {
+    const sheetXml = xmlMap.get(sheetKey);
+    if (!sheetXml) continue;
+
+    const parsedGrid = [];
+    const rowRegex = /<(?:\w+:)?row\b[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g;
+    let rMatch;
+    while ((rMatch = rowRegex.exec(sheetXml)) !== null) {
+      const rowCells = [];
+      const cellRegex = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+      let cMatch;
+      let nextSeqIdx = 0;
+
+      while ((cMatch = cellRegex.exec(rMatch[1])) !== null) {
+        const attrs = cMatch[1] || "";
+        const inner = cMatch[2] || "";
+        const refMatch = /\br="([A-Za-z]+\d+)"/.exec(attrs);
+        const targetCol = refMatch ? excelColIndex(refMatch[1]) : nextSeqIdx;
+        const typeMatch = /\bt="([^"]+)"/.exec(attrs);
+        const cellType = typeMatch ? typeMatch[1] : "";
+        let val = "";
+
+        if (cellType === "inlineStr") {
+          const tRegex = /<(?:\w+:)?t\b[^>]*>([\s\S]*?)<\/(?:\w+:)?t>/g;
+          let tMatch;
+          while ((tMatch = tRegex.exec(inner)) !== null) {
+            val += decodeXmlEntities(tMatch[1]);
+          }
+        } else {
+          const vMatch = /<(?:\w+:)?v\b[^>]*>([\s\S]*?)<\/(?:\w+:)?v>/.exec(inner);
+          if (vMatch) {
+            const rawV = decodeXmlEntities(vMatch[1]);
+            val = cellType === "s" ? sharedStrings[parseInt(rawV, 10)] || "" : rawV;
+          }
+        }
+
+        rowCells[targetCol] = val.trim();
+        nextSeqIdx = targetCol + 1;
+      }
+      if (rowCells.length > 0) parsedGrid.push(rowCells);
+    }
+
+    // Pula abas de resumo dinâmico pequenas (ex.: tabelas dinâmicas de totais)
+    if (parsedGrid.length < 2) continue;
+    const headers = Array.from(parsedGrid[0], (h) => normalizeText(h || ""));
+
+    const idx = {
+      codigo: headers.findIndex((h) => ["cod modelo", "material", "sku", "codigo", "cod", "referencia"].includes(h)),
+      nome: headers.findIndex((h) => ["des produto", "descr. material", "descr material", "nome", "nome do produto", "produto", "descricao"].includes(h)),
+      setor: headers.findIndex((h) => ["des grupo", "grupo", "nivel 1", "setor", "departamento"].includes(h)),
+      subgrupo: headers.findIndex((h) => ["des subgrupo", "subgrupo", "modelo"].includes(h)),
+      modalidade: headers.findIndex((h) => ["des categoria", "categoria", "modalidade", "esporte"].includes(h)),
+      classe: headers.findIndex((h) => ["des classe", "classe"].includes(h)),
+      genero: headers.findIndex((h) => ["genero", "publico"].includes(h)),
+      marca: headers.findIndex((h) => ["des marca", "marca", "fabricante"].includes(h)),
+      cor: headers.findIndex((h) => ["cor", "cores"].includes(h)),
+      tamanho: headers.findIndex((h) => ["tamanho", "tam", "numeracao"].includes(h)),
+      ean: headers.findIndex((h) => ["ean", "cod barras", "codigo de barras"].includes(h)),
+    };
+
+    // Se a aba não tiver coluna de código/material reconhecível, pula
+    if (idx.codigo < 0) continue;
+
+    for (let i = 1; i < parsedGrid.length; i++) {
+      const cols = parsedGrid[i];
+      const codigo = (cols[idx.codigo] || "").trim().toUpperCase();
+      if (!/^[A-Z0-9]{6,14}$/.test(codigo) || codigo === "TOTAL") continue;
+
+      const rawClasse = idx.classe >= 0 ? (cols[idx.classe] || "").trim() : "";
+      const rawGenero = idx.genero >= 0 ? (cols[idx.genero] || "").trim().toUpperCase() : "";
+      const pubFromClasse = CLASSE_TO_PUBLICO[rawClasse] || "";
+      const pubFromGenero = GENERO_TO_PUBLICO[rawGenero] || "";
+      const publicoExplicito =
+        pubFromClasse === "Infantil" ? "Infantil" : pubFromGenero || pubFromClasse;
+
+      const rawGrupo = idx.setor >= 0 ? cols[idx.setor] || "" : "";
+      const rawModalidade = idx.modalidade >= 0 ? cols[idx.modalidade] || "" : "";
+      const { setor, modalidade } = cleanSapSectorAndModality(rawGrupo, rawModalidade);
+
+      const corLimpa = idx.cor >= 0 ? cleanSapColor(cols[idx.cor] || "") : "";
+      const tamLimpo = idx.tamanho >= 0 ? cleanSapSize(cols[idx.tamanho] || "") : "";
+      const eanRaw = idx.ean >= 0 ? (cols[idx.ean] || "").replace(/\D+/g, "") : "";
+
+      allRecords.push({
+        codigo,
+        nomeProduto: idx.nome >= 0 ? (cols[idx.nome] || "").trim() : "",
+        marca: idx.marca >= 0 ? (cols[idx.marca] || "").trim() : "",
+        cor: corLimpa,
+        tamanho: tamLimpo,
+        setor,
+        subgrupo: idx.subgrupo >= 0 ? (cols[idx.subgrupo] || "").trim() : "",
+        modalidade,
+        publicoExplicito,
+        ean: eanRaw.length >= 8 ? eanRaw : "",
+      });
+    }
+  }
+
+  return allRecords;
+}
+
 const csvFiles = fs
   .readdirSync(ROOT_DIR)
   .filter((f) => f.toLowerCase().endsWith(".csv"))
   .sort();
 
+const xlsxFiles = fs
+  .readdirSync(ROOT_DIR)
+  .filter((f) => f.toLowerCase().endsWith(".xlsx") && !f.startsWith("~$"))
+  .sort();
+
 const outPath = path.join(ROOT_DIR, "catalogo.js");
 
-if (csvFiles.length > 0) {
+if (csvFiles.length > 0 || xlsxFiles.length > 0) {
   const mergedMap = new Map();
+  const skusByPrefix6 = new Map();
 
   for (const fname of csvFiles) {
     const text = fs.readFileSync(path.join(ROOT_DIR, fname), "utf8");
@@ -211,6 +494,9 @@ if (csvFiles.length > 0) {
       const cur = mergedMap.get(r.codigo);
       if (!cur) {
         mergedMap.set(r.codigo, r);
+        const p6 = r.codigo.slice(0, 6).toUpperCase();
+        if (!skusByPrefix6.has(p6)) skusByPrefix6.set(p6, []);
+        skusByPrefix6.get(p6).push(r);
       } else {
         if (!cur.nomeProduto && r.nomeProduto) cur.nomeProduto = r.nomeProduto;
         if (!cur.modelo && r.modelo) cur.modelo = r.modelo;
@@ -220,6 +506,89 @@ if (csvFiles.length > 0) {
         if (!cur.setor && r.setor) cur.setor = r.setor;
         if (!cur.categoriaExplicita && r.categoriaExplicita) cur.categoriaExplicita = r.categoriaExplicita;
       }
+    }
+  }
+
+  // Primeiro processa planilhas .xlsx com SKUs completos (ex.: relatórios SAP de 12 dígitos com EAN/Cor/Tamanho),
+  // e por fim processa códigos de referência de 6 dígitos (enriquecendo os de 12 ou criando referência nova).
+  const sixDigitModels = [];
+
+  for (const xname of xlsxFiles) {
+    const xRecords = parseXLSXFile(path.join(ROOT_DIR, xname));
+    for (const xr of xRecords) {
+      if (xr.codigo.length === 6) {
+        sixDigitModels.push(xr);
+        continue;
+      }
+
+      // SKU completo vindo do SAP .xlsx (ex.: 12 dígitos)
+      const existing = mergedMap.get(xr.codigo);
+      if (!existing) {
+        const rowObj = {
+          codigo: xr.codigo,
+          nomeProduto: xr.nomeProduto,
+          modelo: "",
+          marca: xr.marca,
+          cor: xr.cor,
+          tamanho: xr.tamanho,
+          setor: xr.setor,
+          categoriaExplicita: "",
+          publicoExplicito: xr.publicoExplicito,
+          modalidade: xr.modalidade,
+          subgrupo: xr.subgrupo,
+          ean: xr.ean,
+        };
+        mergedMap.set(xr.codigo, rowObj);
+        const p6 = xr.codigo.slice(0, 6).toUpperCase();
+        if (!skusByPrefix6.has(p6)) skusByPrefix6.set(p6, []);
+        skusByPrefix6.get(p6).push(rowObj);
+      } else {
+        if (!existing.nomeProduto && xr.nomeProduto) existing.nomeProduto = xr.nomeProduto;
+        if (!existing.marca && xr.marca) existing.marca = xr.marca;
+        if (!existing.cor && xr.cor) existing.cor = xr.cor;
+        if (!existing.tamanho && xr.tamanho) existing.tamanho = xr.tamanho;
+        if (!existing.setor && xr.setor) existing.setor = xr.setor;
+        if (!existing.publicoExplicito && xr.publicoExplicito) existing.publicoExplicito = xr.publicoExplicito;
+        if (!existing.modalidade && xr.modalidade) existing.modalidade = xr.modalidade;
+        if (!existing.subgrupo && xr.subgrupo) existing.subgrupo = xr.subgrupo;
+        if (!existing.ean && xr.ean) existing.ean = xr.ean;
+      }
+    }
+  }
+
+  for (const xm of sixDigitModels) {
+    if (skusByPrefix6.has(xm.codigo)) {
+      const matchingSkus = skusByPrefix6.get(xm.codigo);
+      for (const item of matchingSkus) {
+        if (!item.nomeProduto && xm.nomeProduto) item.nomeProduto = xm.nomeProduto;
+        if (!item.marca && xm.marca) item.marca = xm.marca;
+        if (!item.setor && xm.setor) item.setor = xm.setor;
+        if (xm.publicoExplicito && !item.publicoExplicito) item.publicoExplicito = xm.publicoExplicito;
+        if (xm.modalidade && !item.modalidade) item.modalidade = xm.modalidade;
+      }
+    } else if (!mergedMap.has(xm.codigo)) {
+      const derivedMod = deriveModelFromProductName(xm.nomeProduto, xm.marca);
+      const modeloLabel =
+        xm.modalidade && derivedMod !== "-"
+          ? derivedMod + " (" + xm.modalidade + ")"
+          : derivedMod !== "-"
+          ? derivedMod
+          : xm.subgrupo || "-";
+
+      mergedMap.set(xm.codigo, {
+        codigo: xm.codigo,
+        nomeProduto: xm.nomeProduto,
+        modelo: modeloLabel,
+        marca: xm.marca,
+        cor: "Ref. 6 dígitos",
+        tamanho: "REF",
+        setor: xm.setor,
+        categoriaExplicita: "",
+        publicoExplicito: xm.publicoExplicito,
+        modalidade: xm.modalidade,
+        subgrupo: xm.subgrupo,
+        ean: "",
+      });
     }
   }
 
@@ -320,12 +689,27 @@ if (csvFiles.length > 0) {
     const modelo = raw.modelo || deriveModelFromProductName(raw.nomeProduto, marca);
     const cor = raw.cor || "-";
     const tamanho = raw.tamanho || "UNI";
-    const setor = raw.setor || "OUTROS";
+    const setor = (raw.setor || "OUTROS")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .trim();
     const setorNorm = normalizeText(setor);
+    if (setorNorm === "ativos") continue;
+
     const nomeNorm = normalizeText(nome);
+    const extraHintsNorm = normalizeText((raw.subgrupo || "") + " " + (raw.modalidade || ""));
     const modeloNorm = normalizeText(modelo);
-    const categoria = classifyProductCategory(setorNorm, nomeNorm, modeloNorm, raw.categoriaExplicita);
-    const isInf = detectDirectInfantil(setorNorm, nomeNorm, modeloNorm, tamanho);
+    const categoria = classifyProductCategory(
+      setorNorm,
+      (nomeNorm + " " + extraHintsNorm).trim(),
+      modeloNorm,
+      raw.categoriaExplicita
+    );
+    if (categoria === "Mobiliário e Ativos") continue;
+    const isInf =
+      raw.publicoExplicito === "Infantil" ||
+      detectDirectInfantil(setorNorm, nomeNorm, modeloNorm, tamanho);
 
     const base8 = raw.codigo.slice(0, 8).toUpperCase();
     if (setorNorm === "calcados" && /^\d+(\.\d+)?$/.test(tamanho)) {
@@ -349,6 +733,8 @@ if (csvFiles.length > 0) {
       setorNorm,
       nomeNorm,
       modeloNorm,
+      publicoExplicito: raw.publicoExplicito || "",
+      ean: raw.ean || "",
       categoria,
       isInf,
     });
@@ -363,9 +749,13 @@ if (csvFiles.length > 0) {
         isInf = true;
       }
     }
-    const publico = classifyPublico(item.setorNorm, item.nomeNorm, item.modeloNorm, isInf);
+    const publico =
+      isInf
+        ? "Infantil"
+        : item.publicoExplicito ||
+          classifyPublico(item.setorNorm, item.nomeNorm, item.modeloNorm, false);
 
-    compactRows.push([
+    const rowOut = [
       item.codigo,
       item.nome,
       item.modelo,
@@ -375,7 +765,9 @@ if (csvFiles.length > 0) {
       dictSetores.id(item.setor),
       dictCategorias.id(item.categoria),
       dictPublicos.id(publico),
-    ]);
+    ];
+    if (item.ean) rowOut.push(item.ean);
+    compactRows.push(rowOut);
   }
 
   const payload = {
@@ -397,7 +789,9 @@ if (csvFiles.length > 0) {
     ";\n";
 
   fs.writeFileSync(outPath, jsOutput, "utf8");
-  console.log(`catalogo.js atualizado a partir de ${csvFiles.length} arquivo(s) CSV -> ${(fs.statSync(outPath).size / 1024).toFixed(1)} KB`);
+  console.log(
+    `catalogo.js atualizado a partir de ${csvFiles.length} CSV(s) e ${xlsxFiles.length} XLSX(s) -> ${(fs.statSync(outPath).size / 1024).toFixed(1)} KB`
+  );
 } else if (fs.existsSync(outPath)) {
   console.log("Nenhum CSV na pasta de build — reutilizando catalogo.js existente.");
 } else {

@@ -1431,6 +1431,20 @@ html[data-theme="dark"] .recent-search-item:hover {
   box-shadow: var(--shadow-sm);
 }
 
+.site-footer {
+  width: 100%;
+  text-align: center;
+  padding: 14px 16px calc(22px + env(safe-area-inset-bottom, 0px));
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.site-footer strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
 .fab-search-top {
   position: fixed;
   right: 14px;

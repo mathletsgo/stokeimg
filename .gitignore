@@ -1,0 +1,12 @@
+# Dependências e pastas geradas no deploy
+node_modules/
+dist/
+.vercel/
+
+# Sigilo de inventário: ignora planilhas CSV brutas (que contêm QTD ESPERADA / CONTADA).
+# Apenas o "catalogo.js" já higienizado (sem quantidades) vai para o Git e Vercel!
+*.csv
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db

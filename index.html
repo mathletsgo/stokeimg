@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="theme-color" id="meta-theme-color" content="#d90429" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="logo.svg?v=8" />
+  <link rel="apple-touch-icon" href="logo.svg?v=8" />
+  <title>BuscaSKU — Localizador Inteligente de Produtos</title>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("cent_sku_theme_v1");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = saved || (prefersDark ? "dark" : "light");
+        if (theme === "dark") {
+          document.documentElement.setAttribute("data-theme", "dark");
+          var meta = document.getElementById("meta-theme-color");
+          if (meta) meta.setAttribute("content", "#0b0f19");
+        }
+      } catch (_e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="style.css?v=8" />
+</head>
+<body>
+  <!-- Cabeçalho ultra-compacto: recolhe título e filtros ao rolar para maximizar produtos na tela -->
+  <header class="top-header" id="top-header">
+    <div class="header-inner">
+      <div class="brand-row" id="brand-row">
+        <div class="brand-title-group">
+          <img src="logo.svg?v=7" alt="Logo BuscaSKU" class="brand-logo-img" width="34" height="34" />
+          <div class="brand-wordmark-wrap">
+            <h1 class="brand-title">BUSCA<span class="brand-title-accent">SKU</span></h1>
+            <p class="brand-subtitle">Toque no tamanho p/ trocar • Foto abre QR</p>
+          </div>
+        </div>
+        <div class="brand-actions-right">
+          <!-- Botão Modo Dark / Light -->
+          <button
+            type="button"
+            id="theme-toggle-btn"
+            class="theme-toggle-btn"
+            aria-label="Alternar tema escuro ou claro"
+            title="Alternar modo escuro / claro"
+          >
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+          </button>
+          <!-- Botão Modo Grade (agrupa tamanhos no mesmo card) -->
+          <button
+            type="button"
+            id="toggle-group-mode-btn"
+            class="mode-toggle-pill is-active"
+            aria-pressed="true"
+            title="Alternar entre Modo Grade (tamanhos juntos no card) e Modo Individual"
+          >
+            Grade
+          </button>
+          <button
+            type="button"
+            id="import-csv-btn"
+            class="import-csv-btn"
+            title="Importar ou mesclar arquivos CSV"
+          >
+            + CSV
+          </button>
+          <input type="file" id="csv-file-input" accept=".csv" multiple hidden />
+        </div>
+      </div>
+
+      <!-- Barra de pesquisa + Botão de Seta para descer/recolher os filtros -->
+      <div class="search-and-toggle-row">
+        <form id="search-form" class="search-bar-wrapper" action="javascript:void(0)" role="search">
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input
+            type="search"
+            id="search-input"
+            class="search-input"
+            placeholder="Digite nome, modelo, cor, tamanho ou código..."
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            enterkeyhint="search"
+            aria-label="Pesquisar produtos por nome, modelo, cor, tamanho ou código"
+          />
+          <button
+            type="button"
+            id="clear-search-btn"
+            class="clear-search-btn"
+            title="Limpar pesquisa"
+            aria-label="Limpar pesquisa"
+            hidden
+          >&times;</button>
+        </form>
+
+        <!-- Seta que ao clicar desce/sobe o painel de filtros -->
+        <button
+          type="button"
+          id="toggle-filters-btn"
+          class="toggle-filters-arrow-btn"
+          aria-expanded="false"
+          aria-controls="filters-drawer"
+          title="Abrir ou fechar filtros"
+        >
+          <span class="toggle-filters-label">Filtros</span>
+          <span id="active-filter-dot" class="active-filter-dot" hidden></span>
+          <svg class="chevron-arrow-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Gaveta retrátil de filtros (desce ao clicar na seta e esconde sozinha ao rolar a tela!) -->
+      <div id="filters-drawer" class="filters-drawer" aria-hidden="true">
+        <div class="filters-drawer-inner">
+          <!-- Atalhos rápidos de Setor -->
+          <div id="sector-quick-chips" class="sector-quick-chips" aria-label="Atalhos rápidos de setor"></div>
+
+          <!-- 6 Dropdowns em cascata sem exibir quantidades de SKU -->
+          <div class="filters-group">
+            <div class="filter-field">
+              <label for="filter-sector" class="filter-label">Setor</label>
+              <select id="filter-sector" class="filter-select">
+                <option value="">Todos os setores</option>
+              </select>
+            </div>
+
+            <div class="filter-field">
+              <label for="filter-publico" class="filter-label">Público</label>
+              <select id="filter-publico" class="filter-select">
+                <option value="">Todos os públicos</option>
+              </select>
+            </div>
+
+            <div class="filter-field">
+              <label for="filter-category" class="filter-label">Categoria</label>
+              <select id="filter-category" class="filter-select">
+                <option value="">Todas as categorias</option>
+              </select>
+            </div>
+
+            <div class="filter-field">
+              <label for="filter-brand" class="filter-label">Marca</label>
+              <select id="filter-brand" class="filter-select">
+                <option value="">Todas as marcas</option>
+              </select>
+            </div>
+
+            <div class="filter-field">
+              <label for="filter-size" class="filter-label">Tamanho</label>
+              <select id="filter-size" class="filter-select">
+                <option value="">Todos os tamanhos</option>
+              </select>
+            </div>
+
+            <div class="filter-field">
+              <label for="filter-color" class="filter-label">Cor</label>
+              <select id="filter-color" class="filter-select">
+                <option value="">Todas as cores</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="drawer-bottom-actions">
+            <button type="button" id="reset-filters-btn" class="reset-filters-btn" hidden>
+              Limpar filtros
+            </button>
+            <button type="button" id="collapse-drawer-up-btn" class="collapse-up-btn">
+              <span>Recolher filtros</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="18 15 12 9 6 15"></polyline>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Linha discreta de filtros ativos (sem números!) -->
+      <div id="active-status-bar" class="active-status-bar" hidden>
+        <span id="active-filters-summary" class="active-filters-summary"></span>
+        <span id="approx-badge" class="approx-badge" hidden>Busca aproximada</span>
+        <button type="button" id="quick-clear-all-btn" class="quick-clear-link">Limpar</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo Principal -->
+  <main class="main-container">
+    <section id="products-grid" class="products-grid" aria-label="Resultados de produtos"></section>
+
+    <!-- Tela Inicial: Fixados de Balcão + Últimos Consultados + Sugestões -->
+    <div id="home-hub" class="home-hub">
+      <!-- Seção 1: Itens Fixados (Balcão) -->
+      <section id="pinned-section" class="hub-section" hidden>
+        <div class="hub-section-header">
+          <h2 class="hub-section-title">★ Fixados (Itens de Balcão)</h2>
+        </div>
+        <div id="pinned-list" class="hub-cards-list"></div>
+      </section>
+
+      <!-- Seção 2: Últimos Consultados -->
+      <section id="recent-section" class="hub-section" hidden>
+        <div class="hub-section-header">
+          <h2 class="hub-section-title">Últimos Consultados</h2>
+          <button type="button" id="clear-recent-btn" class="hub-clear-btn">Limpar histórico</button>
+        </div>
+        <div id="recent-list" class="hub-cards-list"></div>
+      </section>
+
+      <!-- Estado Inicial / Mensagem Vazia -->
+      <div id="empty-state" class="state-box">
+        <svg id="state-icon-search" class="state-icon state-icon-brand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <h2 id="empty-title" class="state-title">Comece digitando na barra acima</h2>
+        <p id="empty-desc" class="state-desc">
+          Digite nome, modelo, cor, tamanho ou código. Toque em ★ num card para fixar itens de balcão aqui!
+        </p>
+        <div id="quick-suggestions" class="quick-suggestions">
+          <span class="quick-suggestions-label">Exemplos rápidos:</span>
+          <div class="quick-suggestions-list">
+            <button type="button" class="suggestion-pill" data-query="camiseta nike azul M">camiseta nike azul M</button>
+            <button type="button" class="suggestion-pill" data-query="tenis adidas feminino">tenis adidas feminino</button>
+            <button type="button" class="suggestion-pill" data-query="chuteira infantil">chuteira infantil</button>
+            <button type="button" class="suggestion-pill" data-query="bermuda oxer G">bermuda oxer G</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Paginação incremental suave -->
+    <div id="load-more-wrap" class="load-more-wrap" hidden>
+      <button type="button" id="load-more-btn" class="load-more-btn">Mostrar mais produtos</button>
+    </div>
+    <div id="scroll-sentinel" aria-hidden="true"></div>
+  </main>
+
+  <!-- Botão flutuante para voltar rápido à busca no celular -->
+  <button type="button" id="scroll-top-search-btn" class="fab-search-top" aria-label="Voltar ao topo e pesquisar" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polyline points="18 15 12 9 6 15"></polyline>
+    </svg>
+    <span>Buscar</span>
+  </button>
+
+  <!-- Modal / Gaveta de QR Code do Produto -->
+  <div id="qr-modal" class="qr-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="qr-modal-title" hidden>
+    <div class="qr-modal-card">
+      <button type="button" id="qr-modal-pin-btn" class="qr-modal-pin-btn" aria-label="Fixar produto no balcão" title="Fixar / desafixar nos itens de balcão">☆</button>
+      <button type="button" id="qr-modal-close" class="qr-modal-close" aria-label="Fechar QR Code">&times;</button>
+      <span class="qr-modal-tag">QR Code do Produto</span>
+      <div id="qr-canvas-box" class="qr-canvas-box" aria-live="polite"></div>
+
+      <button type="button" id="qr-modal-sku-btn" class="qr-modal-sku-btn" title="Toque para copiar o código">
+        <span id="qr-modal-sku-code" class="qr-modal-sku-code"></span>
+        <span class="sku-action-hint" data-default-label="Copiar">Copiar</span>
+      </button>
+
+      <h3 id="qr-modal-title" class="qr-modal-product-name"></h3>
+      <p id="qr-modal-meta" class="qr-modal-product-meta"></p>
+
+      <div class="qr-modal-actions">
+        <button type="button" id="qr-download-btn" class="qr-download-btn">
+          Baixar etiqueta QR (PNG)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast visual de confirmação de cópia -->
+  <div id="copy-toast" class="copy-toast" role="status" aria-live="polite"></div>
+
+  <!-- Módulos da aplicação -->
+  <script src="catalogo.js?v=8"></script>
+  <script src="qrcode.js?v=8"></script>
+  <script src="app.js?v=8"></script>
+</body>
+</html>

@@ -36,7 +36,7 @@
 }
 
 html {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
+  font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, Helvetica, Arial, sans-serif;
   color: var(--text-primary);
   background-color: var(--bg-page);
   -webkit-font-smoothing: antialiased;
@@ -294,6 +294,31 @@ html[data-theme="dark"] .theme-toggle-btn .icon-sun {
   box-shadow: var(--shadow-search);
 }
 
+/* Camada fantasma (ghost text) de autocompletar dentro da barra estilo Google */
+.search-ghost-layer {
+  position: absolute;
+  inset: 0;
+  padding: 0 38px 0 36px;
+  border: 2px solid transparent;
+  display: flex;
+  align-items: center;
+  font-size: 1rem;
+  font-weight: 500;
+  pointer-events: none;
+  white-space: pre;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.search-ghost-typed {
+  color: transparent;
+}
+
+.search-ghost-rest {
+  color: var(--text-muted);
+  opacity: 0.55;
+}
+
 .clear-search-btn {
   position: absolute;
   right: 8px;
@@ -311,6 +336,7 @@ html[data-theme="dark"] .theme-toggle-btn .icon-sun {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  z-index: 3;
 }
 
 .clear-search-btn[hidden] {
@@ -406,10 +432,55 @@ html[data-theme="dark"] .theme-toggle-btn .icon-sun {
   flex-shrink: 0;
 }
 
+.recent-searches-header[hidden] {
+  display: none;
+}
+
+.recent-search-item.is-highlighted {
+  background: #f1f5f9;
+}
+
 .recent-search-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 400;
+}
+
+.recent-search-text strong {
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.recent-search-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: 6px;
+  font-weight: 500;
+}
+
+.autocomplete-fill-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.autocomplete-fill-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.autocomplete-fill-btn:hover {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-primary);
 }
 
 .recent-search-remove-btn {
@@ -441,8 +512,13 @@ html[data-theme="dark"] .recent-search-item {
   border-bottom-color: rgba(255, 255, 255, 0.07);
 }
 
-html[data-theme="dark"] .recent-search-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+html[data-theme="dark"] .recent-search-item:hover,
+html[data-theme="dark"] .recent-search-item.is-highlighted {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme="dark"] .search-ghost-layer {
+  border-width: 1.5px;
 }
 
 /* Botão de Seta compacto ao lado da barra de pesquisa */
@@ -2006,6 +2082,10 @@ html[data-theme="dark"] .qr-variant-chip.is-selected {
     padding: 0 34px 0 34px;
   }
 
+  .search-ghost-layer {
+    padding: 0 34px 0 34px;
+  }
+
   .search-input::placeholder {
     font-size: 0.82rem;
   }
@@ -2112,6 +2192,11 @@ html[data-theme="dark"] .qr-variant-chip.is-selected {
 
   .search-input {
     height: 52px;
+    font-size: 1.05rem;
+    padding-left: 44px;
+  }
+
+  .search-ghost-layer {
     font-size: 1.05rem;
     padding-left: 44px;
   }
@@ -2700,4 +2785,393 @@ html[data-theme="dark"] .copy-toast {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ==========================================================================
+   UPGRADE VISUAL & TECNOLÓGICO 2.0
+   - Tipografia Plus Jakarta Sans + JetBrains Mono
+   - Busca por voz, status offline, instalação PWA
+   - Modal com abas (QR Code / Foto Ampliada), grab handle e compartilhamento
+   - Indicador rápido de outras cores no card
+   ========================================================================== */
+
+.sku-value,
+.hub-sku-btn,
+.qr-modal-sku-code {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Indicador Offline + Botão Instalar PWA */
+.offline-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  background: rgba(245, 158, 11, 0.16);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  color: #b45309;
+}
+
+.offline-badge[hidden] {
+  display: none;
+}
+
+.offline-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #f59e0b;
+}
+
+html[data-theme="dark"] .offline-badge {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+
+.install-pwa-btn {
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--brand-primary);
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.12s ease;
+}
+
+.install-pwa-btn[hidden] {
+  display: none;
+}
+
+.install-pwa-btn:hover {
+  background: var(--brand-primary);
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .install-pwa-btn {
+  color: #ff8fa0;
+  border-color: rgba(255, 42, 75, 0.55);
+  background: rgba(255, 42, 75, 0.16);
+}
+
+html[data-theme="dark"] .install-pwa-btn:hover {
+  background: var(--brand-primary);
+  color: #ffffff;
+}
+
+/* Botão de Busca por Voz dentro da barra */
+.search-bar-wrapper.has-voice-btn .search-input,
+.search-bar-wrapper.has-voice-btn .search-ghost-layer {
+  padding-right: 76px;
+}
+
+.voice-search-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease, transform 0.12s ease;
+}
+
+.voice-search-btn[hidden] {
+  display: none;
+}
+
+.voice-search-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.search-bar-wrapper.has-voice-btn .clear-search-btn {
+  right: 44px;
+}
+
+.voice-search-btn:hover {
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary);
+}
+
+html[data-theme="dark"] .voice-search-btn {
+  background: rgba(51, 65, 85, 0.65);
+  color: #cbd5e1;
+}
+
+html[data-theme="dark"] .voice-search-btn:hover {
+  background: rgba(255, 42, 75, 0.2);
+  color: #ff8fa0;
+}
+
+@keyframes voicePulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 42, 75, 0.55); }
+  70% { box-shadow: 0 0 0 10px rgba(255, 42, 75, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 42, 75, 0); }
+}
+
+.voice-search-btn.is-listening {
+  background: var(--brand-primary) !important;
+  color: #ffffff !important;
+  animation: voicePulse 1.3s ease-out infinite;
+}
+
+/* Indicador de múltiplas cores no Card */
+.card-colors-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(217, 4, 41, 0.26);
+  background: var(--brand-primary-soft);
+  color: var(--brand-primary-dark);
+  font-size: 0.64rem;
+  font-weight: 700;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.card-colors-btn:hover {
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+  color: #ffffff;
+}
+
+.card-colors-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.card-colors-dots i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.card-colors-dots i:nth-child(1) { background: #ef4444; }
+.card-colors-dots i:nth-child(2) { background: #3b82f6; }
+.card-colors-dots i:nth-child(3) { background: #10b981; }
+
+html[data-theme="dark"] .card-colors-btn {
+  background: rgba(255, 42, 75, 0.14);
+  border-color: rgba(255, 42, 75, 0.36);
+  color: #ff99aa;
+}
+
+html[data-theme="dark"] .card-colors-btn:hover {
+  background: var(--brand-primary);
+  border-color: var(--brand-primary);
+  color: #ffffff;
+}
+
+@media (max-width: 639px) {
+  .card-colors-btn {
+    font-size: 0.54rem;
+    padding: 2px 5px;
+    gap: 3px;
+  }
+
+  .card-colors-dots i {
+    width: 4px;
+    height: 4px;
+  }
+}
+
+/* Modal 2.0: Alça mobile (grab handle) + Abas QR / Foto + Ações secundárias */
+.modal-grab-handle {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.45);
+  margin: -4px auto 12px;
+}
+
+@media (min-width: 860px) {
+  .modal-grab-handle {
+    display: none;
+  }
+}
+
+.modal-view-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  margin-bottom: 12px;
+}
+
+.modal-view-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.modal-view-tab.is-active {
+  background: #ffffff;
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.1);
+}
+
+html[data-theme="dark"] .modal-view-tabs {
+  background: rgba(15, 23, 42, 0.72);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+html[data-theme="dark"] .modal-view-tab {
+  color: #94a3b8;
+}
+
+html[data-theme="dark"] .modal-view-tab.is-active {
+  background: var(--brand-primary);
+  color: #ffffff;
+  box-shadow: 0 3px 12px rgba(255, 42, 75, 0.36);
+}
+
+.modal-visual-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.modal-visual-panel[hidden] {
+  display: none;
+}
+
+.modal-photo-box {
+  width: min(260px, 76vw);
+  aspect-ratio: 1 / 1;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  margin-bottom: 14px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.1);
+}
+
+.modal-photo-box.is-loading {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s infinite linear;
+}
+
+.modal-photo-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: opacity 0.2s ease, transform 0.22s ease;
+}
+
+html[data-theme="dark"] .modal-photo-box {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 12px 30px rgba(2, 6, 23, 0.45);
+}
+
+html[data-theme="dark"] .modal-photo-box.no-image {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.qr-modal-secondary-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.qr-share-btn,
+.qr-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.1s ease;
+}
+
+.qr-share-btn {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: var(--text-primary);
+}
+
+.qr-share-btn svg,
+.qr-download-btn svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.qr-share-btn:hover,
+.qr-download-btn:hover {
+  border-color: var(--brand-primary);
+  color: var(--brand-primary);
+}
+
+.qr-share-btn:active,
+.qr-download-btn:active {
+  transform: scale(0.98);
+}
+
+html[data-theme="dark"] .qr-share-btn {
+  background: rgba(15, 23, 42, 0.65);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+
+html[data-theme="dark"] .qr-share-btn:hover,
+html[data-theme="dark"] .qr-download-btn:hover {
+  border-color: rgba(255, 42, 75, 0.6);
+  background: rgba(255, 42, 75, 0.14);
+  color: #ffffff;
+}
+
+/* Foco visível acessível para navegação por teclado */
+button:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+/* Refinamento extra de profundidade nos cards no Dark Mode */
+html[data-theme="dark"] .product-card,
+html[data-theme="dark"] .hub-mini-card {
+  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }

@@ -10,6 +10,9 @@
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="logo.svg?v=12" />
   <link rel="apple-touch-icon" href="logo.svg?v=12" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <title>BuscaSKU — Localizador Inteligente de Produtos</title>
   <script>
     (function () {
@@ -27,7 +30,7 @@
       } catch (_e) {}
     })();
   </script>
-  <link rel="stylesheet" href="style.css?v=21" />
+  <link rel="stylesheet" href="style.css?v=23" />
 </head>
 <body>
   <!-- Cabeçalho ultra-compacto: recolhe título e filtros ao rolar para maximizar produtos na tela -->
@@ -42,6 +45,18 @@
           </div>
         </a>
         <div class="brand-actions-right">
+          <span id="offline-badge" class="offline-badge" title="Modo offline ativo (usando catálogo local)" hidden>
+            <span class="offline-dot" aria-hidden="true"></span>Offline
+          </span>
+          <button
+            type="button"
+            id="install-pwa-btn"
+            class="install-pwa-btn"
+            title="Instalar BuscaSKU na tela inicial"
+            hidden
+          >
+            Instalar
+          </button>
           <!-- Botão Modo Dark / Light -->
           <button
             type="button"
@@ -106,6 +121,24 @@
             enterkeyhint="search"
             aria-label="Pesquisar produtos por nome, modelo, cor, tamanho ou código"
           />
+          <div id="search-ghost-layer" class="search-ghost-layer" aria-hidden="true">
+            <span id="search-ghost-typed" class="search-ghost-typed"></span><span id="search-ghost-rest" class="search-ghost-rest"></span>
+          </div>
+          <button
+            type="button"
+            id="voice-search-btn"
+            class="voice-search-btn"
+            title="Buscar por voz"
+            aria-label="Buscar produto por voz"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+              <line x1="12" y1="19" x2="12" y2="23"></line>
+              <line x1="8" y1="23" x2="16" y2="23"></line>
+            </svg>
+          </button>
           <button
             type="button"
             id="clear-search-btn"
@@ -115,9 +148,9 @@
             hidden
           >&times;</button>
 
-          <!-- Histórico de buscas recentes (aparece ao focar na barra vazia) -->
-          <div id="recent-searches-dropdown" class="recent-searches-dropdown" role="listbox" aria-label="Buscas recentes" hidden>
-            <div class="recent-searches-header">
+          <!-- Sugestões inteligentes estilo Google + Histórico de buscas recentes -->
+          <div id="recent-searches-dropdown" class="recent-searches-dropdown" role="listbox" aria-label="Sugestões de pesquisa" hidden>
+            <div id="recent-searches-header" class="recent-searches-header">
               <span class="recent-searches-title">Buscas recentes</span>
               <button type="button" id="clear-recent-searches-btn" class="recent-searches-clear">Limpar</button>
             </div>
@@ -280,16 +313,33 @@
     <span>Buscar</span>
   </button>
 
-  <!-- Modal / Gaveta de QR Code do Produto -->
+  <!-- Modal / Gaveta de QR Code e Foto do Produto -->
   <div id="qr-modal" class="qr-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="qr-modal-title" hidden>
     <div class="qr-modal-card">
+      <div class="modal-grab-handle" aria-hidden="true"></div>
       <button type="button" id="qr-modal-pin-btn" class="qr-modal-pin-btn" aria-label="Fixar produto no balcão" title="Fixar / desafixar nos itens de balcão">☆</button>
-      <button type="button" id="qr-modal-close" class="qr-modal-close" aria-label="Fechar QR Code">&times;</button>
-      <span class="qr-modal-tag">QR Code do Produto</span>
-      <div id="qr-canvas-box" class="qr-canvas-box" aria-live="polite" title="Use o scroll do mouse ou pinça para dar zoom"></div>
-      <div class="qr-zoom-hint-row">
-        <span id="qr-zoom-label" class="qr-zoom-label">Scroll ou pinça p/ zoom (100%)</span>
-        <button type="button" id="qr-zoom-reset-btn" class="qr-zoom-reset-btn" hidden>Resetar</button>
+      <button type="button" id="qr-modal-close" class="qr-modal-close" aria-label="Fechar janela">&times;</button>
+
+      <!-- Seletor de visualização: QR Code ou Foto Ampliada -->
+      <div class="modal-view-tabs" role="tablist" aria-label="Modo de visualização">
+        <button type="button" id="modal-tab-qr" class="modal-view-tab is-active" role="tab" aria-selected="true">
+          QR Code
+        </button>
+        <button type="button" id="modal-tab-photo" class="modal-view-tab" role="tab" aria-selected="false">
+          Foto Ampliada
+        </button>
+      </div>
+
+      <div id="modal-qr-panel" class="modal-visual-panel">
+        <div id="qr-canvas-box" class="qr-canvas-box" aria-live="polite" title="Use o scroll do mouse ou pinça para dar zoom"></div>
+        <div class="qr-zoom-hint-row">
+          <span id="qr-zoom-label" class="qr-zoom-label">Scroll ou pinça p/ zoom (100%)</span>
+          <button type="button" id="qr-zoom-reset-btn" class="qr-zoom-reset-btn" hidden>Resetar</button>
+        </div>
+      </div>
+
+      <div id="modal-photo-panel" class="modal-visual-panel" hidden>
+        <div id="modal-photo-box" class="modal-photo-box is-loading"></div>
       </div>
 
       <button type="button" id="qr-modal-sku-btn" class="qr-modal-sku-btn" title="Toque para copiar o código">
@@ -327,9 +377,26 @@
             <line x1="10" y1="14" x2="21" y2="3"></line>
           </svg>
         </a>
-        <button type="button" id="qr-download-btn" class="qr-download-btn">
-          Baixar etiqueta QR (PNG)
-        </button>
+        <div class="qr-modal-secondary-actions">
+          <button type="button" id="qr-share-btn" class="qr-share-btn" title="Compartilhar produto e etiqueta QR">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            <span>Compartilhar</span>
+          </button>
+          <button type="button" id="qr-download-btn" class="qr-download-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>Baixar PNG</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -340,6 +407,6 @@
   <!-- Módulos da aplicação -->
   <script src="catalogo.js?v=17"></script>
   <script src="qrcode.js?v=17"></script>
-  <script src="app.js?v=20"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>

@@ -13,8 +13,8 @@ Aplicação web **Mobile-First** (HTML + CSS + JavaScript puro, sem dependência
 
 ---
 
-## Como atualizar a base de produtos (novos CSVs)
-1. Coloque os arquivos `.csv` na raiz desta pasta.
+## Como atualizar a base de produtos (novos CSVs / XLSXs)
+1. Coloque os arquivos `.csv` ou `.xlsx` na pasta `planilhas/` (protegida pelo `.gitignore`).
 2. Gere o novo catálogo higienizado rodando:
    ```bash
    npm run build

@@ -471,15 +471,25 @@ function parseXLSXFile(filePath) {
   return allRecords;
 }
 
-const csvFiles = fs
-  .readdirSync(ROOT_DIR)
-  .filter((f) => f.toLowerCase().endsWith(".csv"))
-  .sort();
+const DATA_DIRS = [path.join(ROOT_DIR, "planilhas"), ROOT_DIR];
 
-const xlsxFiles = fs
-  .readdirSync(ROOT_DIR)
-  .filter((f) => f.toLowerCase().endsWith(".xlsx") && !f.startsWith("~$"))
-  .sort();
+function collectSpreadsheets(ext) {
+  const found = [];
+  for (const dir of DATA_DIRS) {
+    if (!fs.existsSync(dir)) continue;
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.toLowerCase().endsWith(ext) && !f.startsWith("~$"))
+      .sort();
+    for (const f of files) {
+      found.push(path.join(dir, f));
+    }
+  }
+  return found;
+}
+
+const csvFiles = collectSpreadsheets(".csv");
+const xlsxFiles = collectSpreadsheets(".xlsx");
 
 const outPath = path.join(ROOT_DIR, "catalogo.js");
 
@@ -487,8 +497,8 @@ if (csvFiles.length > 0 || xlsxFiles.length > 0) {
   const mergedMap = new Map();
   const skusByPrefix6 = new Map();
 
-  for (const fname of csvFiles) {
-    const text = fs.readFileSync(path.join(ROOT_DIR, fname), "utf8");
+  for (const fullPath of csvFiles) {
+    const text = fs.readFileSync(fullPath, "utf8");
     const rows = parseCSV(text);
     for (const r of rows) {
       const cur = mergedMap.get(r.codigo);
@@ -513,8 +523,8 @@ if (csvFiles.length > 0 || xlsxFiles.length > 0) {
   // e por fim processa códigos de referência de 6 dígitos (enriquecendo os de 12 ou criando referência nova).
   const sixDigitModels = [];
 
-  for (const xname of xlsxFiles) {
-    const xRecords = parseXLSXFile(path.join(ROOT_DIR, xname));
+  for (const fullPath of xlsxFiles) {
+    const xRecords = parseXLSXFile(fullPath);
     for (const xr of xRecords) {
       if (xr.codigo.length === 6) {
         sixDigitModels.push(xr);
@@ -811,6 +821,7 @@ const PUBLIC_ASSETS = [
   "catalogo.js",
   "logo.svg",
   "manifest.json",
+  "sw.js",
 ];
 
 for (const asset of PUBLIC_ASSETS) {

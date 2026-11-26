@@ -5,9 +5,13 @@ dist/
 
 # Sigilo de inventário e vendas: ignora planilhas brutas (.csv e .xlsx).
 # Apenas o "catalogo.js" já higienizado (sem quantidades nem valores) vai para o Git e Vercel!
+planilhas/
 *.csv
+*.CSV
 *.xlsx
+*.XLSX
 *.xls
+*.XLS
 
 # Arquivos de sistema
 .DS_Store

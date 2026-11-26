@@ -17,12 +17,7 @@
 (function () {
   "use strict";
 
-  const CSV_FALLBACK_FILES = [
-    "CENT_Dashboard de Inventário_2026-11-24_192859.csv",
-    "CENT_Dashboard de Inventário_2026-11-24_193039.csv",
-    "CENT_Dashboard de Inventário_2026-11-24_193100.csv",
-    "CENT_Dashboard de Inventário_2026-11-24_195008.csv",
-  ];
+  const CSV_FALLBACK_FILES = [];
 
   const CENTAURO_IMG_BASE = "https://imgcentauro-a.akamaihd.net/768x768/";
   const DEBOUNCE_MS = 250;
@@ -32,7 +27,7 @@
   const STORAGE_THEME_KEY = "cent_sku_theme_v1";
   const STORAGE_LAST_SUGGESTIONS_KEY = "cent_sku_last_suggestions_v1";
   const STORAGE_RECENT_SEARCHES_KEY = "cent_sku_recent_searches_v1";
-  const MAX_RECENT_ITEMS = 10;
+  const MAX_RECENT_ITEMS = 4;
   const MAX_RECENT_SEARCHES = 6;
 
   const QUICK_SUGGESTIONS_POOL = [
@@ -76,6 +71,11 @@
   let productBySku = new Map();
   let siblingsByBase8 = new Map();
   let siblingsByBase6 = new Map();
+  let autocompleteIndex = [];
+  let currentDropdownItems = [];
+  let activeDropdownIdx = -1;
+  let originalTypedQuery = "";
+  let currentGhostRest = "";
   let displayEntries = []; // No Modo Grade: [{ variants, defaultVariant }] | Individual: [{ variants:[p], defaultVariant:p }]
   let renderedCount = 0;
   let isGroupMode = true;
@@ -86,21 +86,60 @@
   let toastTimer = null;
   let scrollObserver = null;
   let activeQrProduct = null;
+  let activeModalTab = "qr";
   let qrZoomScale = 1;
+  let screenWakeLock = null;
+  let modalHistoryPushed = false;
+  let deferredInstallPrompt = null;
   let isFiltersDrawerOpen = false;
   let lastScrollY = 0;
   let ignoreScrollUntil = 0;
 
+  const STORE_SYNONYMS = {
+    fut: ["futsal"],
+    soc: ["society"],
+    masc: ["masculino"],
+    fem: ["feminino"],
+    inf: ["infantil"],
+    juv: ["infantil"],
+    pb: ["preto", "branco"],
+    cj: ["conjunto"],
+    chut: ["chuteira"],
+    berm: ["bermuda"],
+    cam: ["camiseta"],
+    molet: ["moletom"],
+  };
+
+  function expandStoreSynonyms(tokens) {
+    const out = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tok = tokens[i];
+      const mapped = STORE_SYNONYMS[tok];
+      if (mapped) {
+        for (let m = 0; m < mapped.length; m++) out.push(mapped[m]);
+      } else {
+        out.push(tok);
+      }
+    }
+    return out;
+  }
+
   const els = {
     topHeader: document.getElementById("top-header"),
     brandHomeLink: document.getElementById("brand-home-link"),
+    offlineBadge: document.getElementById("offline-badge"),
+    installPwaBtn: document.getElementById("install-pwa-btn"),
     themeToggleBtn: document.getElementById("theme-toggle-btn"),
     metaThemeColor: document.getElementById("meta-theme-color"),
     toggleGroupModeBtn: document.getElementById("toggle-group-mode-btn"),
     searchForm: document.getElementById("search-form"),
     searchInput: document.getElementById("search-input"),
+    searchGhostTyped: document.getElementById("search-ghost-typed"),
+    searchGhostRest: document.getElementById("search-ghost-rest"),
+    voiceSearchBtn: document.getElementById("voice-search-btn"),
     clearSearchBtn: document.getElementById("clear-search-btn"),
     recentSearchesDropdown: document.getElementById("recent-searches-dropdown"),
+    recentSearchesHeader: document.getElementById("recent-searches-header"),
     recentSearchesList: document.getElementById("recent-searches-list"),
     clearRecentSearchesBtn: document.getElementById("clear-recent-searches-btn"),
     toggleFiltersBtn: document.getElementById("toggle-filters-btn"),
@@ -140,6 +179,11 @@
     qrModal: document.getElementById("qr-modal"),
     qrModalPinBtn: document.getElementById("qr-modal-pin-btn"),
     qrModalClose: document.getElementById("qr-modal-close"),
+    modalTabQr: document.getElementById("modal-tab-qr"),
+    modalTabPhoto: document.getElementById("modal-tab-photo"),
+    modalQrPanel: document.getElementById("modal-qr-panel"),
+    modalPhotoPanel: document.getElementById("modal-photo-panel"),
+    modalPhotoBox: document.getElementById("modal-photo-box"),
     qrCanvasBox: document.getElementById("qr-canvas-box"),
     qrZoomLabel: document.getElementById("qr-zoom-label"),
     qrZoomResetBtn: document.getElementById("qr-zoom-reset-btn"),
@@ -153,6 +197,7 @@
     qrModalSizesRow: document.getElementById("qr-modal-sizes-row"),
     qrModalSizesList: document.getElementById("qr-modal-sizes-list"),
     qrCentauroLink: document.getElementById("qr-centauro-link"),
+    qrShareBtn: document.getElementById("qr-share-btn"),
     qrDownloadBtn: document.getElementById("qr-download-btn"),
     copyToast: document.getElementById("copy-toast"),
   };
@@ -187,7 +232,7 @@
     pinnedSkus = Array.isArray(savedPinned) ? savedPinned : [];
 
     const savedRecent = readStorageJson(STORAGE_RECENT_KEY, []);
-    recentSkus = Array.isArray(savedRecent) ? savedRecent : [];
+    recentSkus = Array.isArray(savedRecent) ? savedRecent.slice(0, MAX_RECENT_ITEMS) : [];
 
     const savedSearches = readStorageJson(STORAGE_RECENT_SEARCHES_KEY, []);
     recentSearches = Array.isArray(savedSearches) ? savedSearches.filter((s) => typeof s === "string" && s.trim()) : [];
@@ -236,63 +281,356 @@
     writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, recentSearches);
   }
 
+  function clearGhostCompletion() {
+    currentGhostRest = "";
+    if (els.searchGhostTyped) els.searchGhostTyped.textContent = "";
+    if (els.searchGhostRest) els.searchGhostRest.textContent = "";
+  }
+
+  function updateGhostCompletion(rawVal, candidateText) {
+    if (!els.searchGhostTyped || !els.searchGhostRest || !els.searchInput) return;
+    if (
+      !rawVal ||
+      !candidateText ||
+      document.activeElement !== els.searchInput ||
+      els.searchInput.scrollLeft > 0 ||
+      rawVal.length >= candidateText.length
+    ) {
+      clearGhostCompletion();
+      return;
+    }
+
+    const rawLower = rawVal.toLowerCase();
+    const candLower = candidateText.toLowerCase();
+    if (candLower.indexOf(rawLower) === 0) {
+      const rest = candidateText.slice(rawVal.length);
+      currentGhostRest = rest;
+      els.searchGhostTyped.textContent = rawVal;
+      els.searchGhostRest.textContent = rest;
+    } else {
+      clearGhostCompletion();
+    }
+  }
+
   function hideRecentSearchesDropdown() {
+    activeDropdownIdx = -1;
+    currentDropdownItems = [];
+    clearGhostCompletion();
     if (els.recentSearchesDropdown) {
       els.recentSearchesDropdown.hidden = true;
     }
   }
 
-  function renderRecentSearchesDropdown() {
-    if (!els.recentSearchesDropdown || !els.recentSearchesList) return;
-    if (recentSearches.length === 0 || (els.searchInput && els.searchInput.value.trim().length > 0)) {
+  const AUTOCOMPLETE_NOISE_WORDS = new Set([
+    "m", "w", "b", "g", "y", "u", "jr", "nk", "nsw", "df", "np", "ls", "ss",
+    "jsy", "torc", "tor", "sho", "bkpk", "ca", "de", "da", "do", "com", "em", "p", "c",
+  ]);
+
+  function cleanPhraseWords(str, maxWords) {
+    const norm = normalizeText(str);
+    if (!norm) return "";
+    const parts = norm.split(" ").filter((w) => w.length >= 2 && !AUTOCOMPLETE_NOISE_WORDS.has(w));
+    return parts.slice(0, maxWords).join(" ");
+  }
+
+  function buildAutocompleteIndex() {
+    const freqMap = new Map();
+
+    const addPhrase = function (rawPhrase, weight) {
+      const clean = String(rawPhrase || "").trim().replace(/\s+/g, " ");
+      if (clean.length < 4) return;
+      const prev = freqMap.get(clean) || 0;
+      freqMap.set(clean, prev + weight);
+    };
+
+    for (const group of siblingsByBase8.values()) {
+      const p = group[0];
+      if (!p) continue;
+      const w = Math.min(group.length, 8);
+
+      const nomeNorm = normalizeText(p.nome);
+      const nomeWords = nomeNorm.split(" ").filter((tok) => tok.length >= 2 && !AUTOCOMPLETE_NOISE_WORDS.has(tok));
+      const firstType = nomeWords[0] || "";
+      const marcaNorm = p.marca && p.marca !== "SEM MARCA" ? normalizeText(p.marca) : "";
+      const pubNorm = p.publico && p.publico !== "Unissex" ? normalizeText(p.publico) : "";
+      const corFirst = p.cor && p.cor !== "-" ? normalizeText(p.cor).split(" ")[0] : "";
+
+      if (firstType && firstType.length >= 3) {
+        if (marcaNorm) {
+          addPhrase(firstType + " " + marcaNorm, w * 3);
+          if (pubNorm) addPhrase(firstType + " " + marcaNorm + " " + pubNorm, w * 2);
+          if (corFirst && corFirst.length >= 3) addPhrase(firstType + " " + marcaNorm + " " + corFirst, w * 2);
+        }
+        if (pubNorm) {
+          addPhrase(firstType + " " + pubNorm, w * 2);
+        }
+      }
+
+      const shortTitle = cleanPhraseWords(p.nome, 4);
+      if (shortTitle && shortTitle.split(" ").length >= 2) {
+        addPhrase(shortTitle, w);
+      }
+    }
+
+    const entries = [];
+    for (const [phrase, weight] of freqMap.entries()) {
+      entries.push({
+        phrase,
+        tokens: phrase.split(" "),
+        weight,
+      });
+    }
+
+    entries.sort((a, b) => b.weight - a.weight || a.phrase.localeCompare(b.phrase, "pt-BR"));
+    autocompleteIndex = entries;
+  }
+
+  function getGoogleStyleSuggestions(rawQuery) {
+    const trimmed = String(rawQuery || "").trim();
+    const normQ = normalizeText(trimmed);
+    if (!normQ) return [];
+
+    const qTokens = normQ.split(" ").filter(Boolean);
+    const seen = new Set();
+    const results = [];
+    const MAX_SUGGESTIONS = 7;
+
+    // 1. Buscas recentes do próprio usuário que combinam com o que está sendo digitado
+    for (let i = 0; i < recentSearches.length && results.length < 2; i++) {
+      const r = recentSearches[i];
+      const rNorm = normalizeText(r);
+      if (rNorm && rNorm !== normQ && rNorm.indexOf(normQ) === 0 && !seen.has(rNorm)) {
+        seen.add(rNorm);
+        results.push({ text: r.toLowerCase(), subtitle: "", isRecent: true });
+      }
+    }
+
+    // 2. Se estiver digitando números/código (>= 3 caracteres com dígitos), sugere SKUs/referências reais
+    const compactQ = normQ.replace(/\s+/g, "");
+    if (compactQ.length >= 3 && /\d/.test(compactQ)) {
+      for (const group of siblingsByBase8.values()) {
+        if (results.length >= MAX_SUGGESTIONS) break;
+        const p = group[0];
+        if (!p) continue;
+        if (p.codigoBase8.indexOf(compactQ) === 0 || p.codigoNorm.indexOf(compactQ) === 0) {
+          const codeKey = group.length > 1 ? p.codigoBase8.toUpperCase() : p.codigo;
+          const normKey = codeKey.toLowerCase();
+          if (!seen.has(normKey)) {
+            seen.add(normKey);
+            const shortName = p.nome.length > 28 ? p.nome.slice(0, 26) + "…" : p.nome;
+            results.push({
+              text: codeKey,
+              subtitle: shortName + (p.cor && p.cor !== "-" ? " • " + p.cor : ""),
+              isRecent: false,
+            });
+          }
+        }
+      }
+    }
+
+    // 3. Sugestões por prefixo direto estilo Google (ex.: "camiseta ni" -> "camiseta nike")
+    for (let i = 0; i < autocompleteIndex.length && results.length < MAX_SUGGESTIONS; i++) {
+      const entry = autocompleteIndex[i];
+      if (entry.phrase !== normQ && entry.phrase.indexOf(normQ) === 0 && !seen.has(entry.phrase)) {
+        seen.add(entry.phrase);
+        results.push({ text: entry.phrase, subtitle: "", isRecent: false });
+      }
+    }
+
+    // 4. Sugestões por palavras em qualquer ordem (ex.: "nike ten" -> "tenis nike")
+    if (results.length < MAX_SUGGESTIONS && qTokens.length >= 1) {
+      for (let i = 0; i < autocompleteIndex.length && results.length < MAX_SUGGESTIONS; i++) {
+        const entry = autocompleteIndex[i];
+        if (seen.has(entry.phrase) || entry.phrase === normQ) continue;
+        let allMatch = true;
+        for (let t = 0; t < qTokens.length; t++) {
+          const qt = qTokens[t];
+          let matchedWord = false;
+          for (let w = 0; w < entry.tokens.length; w++) {
+            if (entry.tokens[w].indexOf(qt) === 0) {
+              matchedWord = true;
+              break;
+            }
+          }
+          if (!matchedWord) {
+            allMatch = false;
+            break;
+          }
+        }
+        if (allMatch) {
+          seen.add(entry.phrase);
+          results.push({ text: entry.phrase, subtitle: "", isRecent: false });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  function formatAutocompleteHtml(suggestionText, rawQuery) {
+    const cleanQ = String(rawQuery || "").trim();
+    if (!cleanQ) return escapeHtml(suggestionText);
+    const sLower = suggestionText.toLowerCase();
+    const qLower = cleanQ.toLowerCase();
+
+    // Estilo Google clássico: trecho já digitado normal + continuação sugerida em negrito
+    if (sLower.indexOf(qLower) === 0) {
+      const typedPart = suggestionText.slice(0, cleanQ.length);
+      const completedPart = suggestionText.slice(cleanQ.length);
+      return escapeHtml(typedPart) + "<strong>" + escapeHtml(completedPart) + "</strong>";
+    }
+
+    return "<strong>" + escapeHtml(suggestionText) + "</strong>";
+  }
+
+  function syncDropdownHighlight() {
+    if (!els.recentSearchesList) return;
+    const children = els.recentSearchesList.children;
+    for (let i = 0; i < children.length; i++) {
+      children[i].classList.toggle("is-highlighted", i === activeDropdownIdx);
+    }
+  }
+
+  function renderSearchDropdown() {
+    if (!els.recentSearchesDropdown || !els.recentSearchesList || !els.searchInput) return;
+    const rawVal = els.searchInput.value || "";
+    const trimmedVal = rawVal.trim();
+    activeDropdownIdx = -1;
+
+    // Caso 1: Barra vazia -> exibe Histórico de Buscas Recentes
+    if (trimmedVal.length === 0) {
+      clearGhostCompletion();
+      if (recentSearches.length === 0) {
+        els.recentSearchesDropdown.hidden = true;
+        currentDropdownItems = [];
+        return;
+      }
+
+      if (els.recentSearchesHeader) els.recentSearchesHeader.hidden = false;
+      els.recentSearchesList.innerHTML = "";
+      currentDropdownItems = recentSearches.slice();
+      const frag = document.createDocumentFragment();
+
+      for (let i = 0; i < recentSearches.length; i++) {
+        const term = recentSearches[i];
+        const row = document.createElement("div");
+        row.className = "recent-search-item";
+
+        const selectBtn = document.createElement("button");
+        selectBtn.type = "button";
+        selectBtn.className = "recent-search-select-btn";
+        selectBtn.innerHTML =
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="9"></circle>' +
+          '<polyline points="12 7 12 12 15 15"></polyline>' +
+          "</svg>" +
+          '<span class="recent-search-text">' +
+          escapeHtml(term) +
+          "</span>";
+
+        selectBtn.addEventListener("click", function () {
+          els.searchInput.value = term;
+          recordRecentSearch(term);
+          hideRecentSearchesDropdown();
+          if (debounceTimer) clearTimeout(debounceTimer);
+          executeSearch(false);
+          els.searchInput.blur();
+        });
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.className = "recent-search-remove-btn";
+        removeBtn.setAttribute("aria-label", "Remover busca " + term);
+        removeBtn.title = "Remover";
+        removeBtn.textContent = "×";
+        removeBtn.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          recentSearches = recentSearches.filter((q) => q !== term);
+          writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, recentSearches);
+          renderSearchDropdown();
+        });
+
+        row.appendChild(selectBtn);
+        row.appendChild(removeBtn);
+        frag.appendChild(row);
+      }
+
+      els.recentSearchesList.appendChild(frag);
+      els.recentSearchesDropdown.hidden = false;
+      return;
+    }
+
+    // Caso 2: Digitando -> Autocompletar Inteligente estilo Google!
+    const suggestions = getGoogleStyleSuggestions(rawVal);
+    currentDropdownItems = suggestions.map((s) => s.text);
+
+    // Atualiza o texto fantasma inline dentro do input se a 1ª sugestão continuar o texto atual
+    updateGhostCompletion(rawVal, suggestions.length > 0 ? suggestions[0].text : "");
+
+    if (suggestions.length === 0) {
       els.recentSearchesDropdown.hidden = true;
       return;
     }
 
+    if (els.recentSearchesHeader) els.recentSearchesHeader.hidden = true;
     els.recentSearchesList.innerHTML = "";
     const frag = document.createDocumentFragment();
 
-    for (let i = 0; i < recentSearches.length; i++) {
-      const term = recentSearches[i];
+    for (let i = 0; i < suggestions.length; i++) {
+      const item = suggestions[i];
       const row = document.createElement("div");
       row.className = "recent-search-item";
 
       const selectBtn = document.createElement("button");
       selectBtn.type = "button";
       selectBtn.className = "recent-search-select-btn";
+
+      const iconSvg = item.isRecent
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 15"></polyline></svg>'
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+          '<circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+
       selectBtn.innerHTML =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-        '<circle cx="12" cy="12" r="9"></circle>' +
-        '<polyline points="12 7 12 12 15 15"></polyline>' +
-        "</svg>" +
+        iconSvg +
         '<span class="recent-search-text">' +
-        escapeHtml(term) +
+        formatAutocompleteHtml(item.text, rawVal) +
+        (item.subtitle ? '<span class="recent-search-sub">' + escapeHtml(item.subtitle) + "</span>" : "") +
         "</span>";
 
       selectBtn.addEventListener("click", function () {
-        els.searchInput.value = term;
-        recordRecentSearch(term);
+        els.searchInput.value = item.text;
+        recordRecentSearch(item.text);
         hideRecentSearchesDropdown();
         if (debounceTimer) clearTimeout(debounceTimer);
         executeSearch(false);
         els.searchInput.blur();
       });
 
-      const removeBtn = document.createElement("button");
-      removeBtn.type = "button";
-      removeBtn.className = "recent-search-remove-btn";
-      removeBtn.setAttribute("aria-label", "Remover busca " + term);
-      removeBtn.title = "Remover";
-      removeBtn.textContent = "×";
-      removeBtn.addEventListener("click", function (ev) {
+      // Botão estilo Google Mobile (seta diagonal ↖) para jogar o termo na barra e continuar digitando cor/tamanho!
+      const fillBtn = document.createElement("button");
+      fillBtn.type = "button";
+      fillBtn.className = "autocomplete-fill-btn";
+      fillBtn.title = "Completar na barra para continuar digitando";
+      fillBtn.setAttribute("aria-label", "Completar " + item.text + " na barra de busca");
+      fillBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<line x1="17" y1="17" x2="7" y2="7"></line>' +
+        '<polyline points="7 17 7 7 17 7"></polyline>' +
+        "</svg>";
+
+      fillBtn.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        recentSearches = recentSearches.filter((q) => q !== term);
-        writeStorageJson(STORAGE_RECENT_SEARCHES_KEY, recentSearches);
-        renderRecentSearchesDropdown();
+        els.searchInput.value = item.text + " ";
+        originalTypedQuery = els.searchInput.value;
+        els.searchInput.focus();
+        renderSearchDropdown();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        executeSearch(false);
       });
 
       row.appendChild(selectBtn);
-      row.appendChild(removeBtn);
+      row.appendChild(fillBtn);
       frag.appendChild(row);
     }
 
@@ -542,6 +880,8 @@
         group.sort((a, b) => compareSizes(a.tamanho, b.tamanho));
       }
     }
+
+    buildAutocompleteIndex();
   }
 
   /**
@@ -1236,7 +1576,8 @@
 
     const normQuery = normalizeText(rawQuery);
     const compactQuery = normQuery.replace(/\s+/g, "");
-    const queryTokens = normQuery ? normQuery.split(" ").filter(Boolean) : [];
+    const rawTokens = normQuery ? normQuery.split(" ").filter(Boolean) : [];
+    const queryTokens = expandStoreSynonyms(rawTokens);
 
     // Sem texto na barra de pesquisa: mostra a Tela Inicial com Fixados + Recentes!
     if (queryTokens.length === 0) {
@@ -1575,8 +1916,56 @@
     }
   }
 
-  function openQrModalForProduct(product, preserveZoom) {
+  async function requestScreenWakeLock() {
+    if (!("wakeLock" in navigator) || !navigator.wakeLock) return;
+    try {
+      if (screenWakeLock) return;
+      screenWakeLock = await navigator.wakeLock.request("screen");
+      screenWakeLock.addEventListener("release", function () {
+        screenWakeLock = null;
+      });
+    } catch (_e) {
+      screenWakeLock = null;
+    }
+  }
+
+  function releaseScreenWakeLock() {
+    if (!screenWakeLock) return;
+    try {
+      screenWakeLock.release();
+    } catch (_e) {}
+    screenWakeLock = null;
+  }
+
+  function renderModalPhoto(product) {
+    if (!els.modalPhotoBox || !product) return;
+    els.modalPhotoBox.innerHTML = "";
+    els.modalPhotoBox.classList.remove("no-image");
+    els.modalPhotoBox.classList.add("is-loading");
+    attachCentauroImageWithFallback(els.modalPhotoBox, product, true);
+  }
+
+  function setModalViewTab(tab) {
+    activeModalTab = tab === "photo" ? "photo" : "qr";
+    const isPhoto = activeModalTab === "photo";
+    if (els.modalTabQr) {
+      els.modalTabQr.classList.toggle("is-active", !isPhoto);
+      els.modalTabQr.setAttribute("aria-selected", !isPhoto ? "true" : "false");
+    }
+    if (els.modalTabPhoto) {
+      els.modalTabPhoto.classList.toggle("is-active", isPhoto);
+      els.modalTabPhoto.setAttribute("aria-selected", isPhoto ? "true" : "false");
+    }
+    if (els.modalQrPanel) els.modalQrPanel.hidden = isPhoto;
+    if (els.modalPhotoPanel) els.modalPhotoPanel.hidden = !isPhoto;
+    if (isPhoto && activeQrProduct) {
+      renderModalPhoto(activeQrProduct);
+    }
+  }
+
+  function openQrModalForProduct(product, preserveZoom, initialTab) {
     if (!els.qrModal || !window.QRCodeGenerator) return;
+    const wasHidden = els.qrModal.hidden;
     activeQrProduct = product;
     recordRecentSku(product.codigo);
     if (els.searchInput && els.searchInput.value.trim().length >= 2) {
@@ -1611,22 +2000,46 @@
     renderQrModalVariants(product);
     syncModalPinState();
 
+    const targetTab = initialTab || (preserveZoom ? activeModalTab : "qr");
+    setModalViewTab(targetTab);
+
     els.qrModal.hidden = false;
     document.body.classList.add("modal-open");
+    requestScreenWakeLock();
+
+    if (wasHidden && typeof window.history !== "undefined" && typeof window.history.pushState === "function") {
+      try {
+        window.history.pushState({ buscaSkuModal: true }, "");
+        modalHistoryPushed = true;
+      } catch (_e) {
+        modalHistoryPushed = false;
+      }
+    }
   }
 
-  function closeQrModal() {
-    if (!els.qrModal) return;
+  function closeQrModal(fromPopState) {
+    if (!els.qrModal || els.qrModal.hidden) return;
     els.qrModal.hidden = true;
     activeQrProduct = null;
     document.body.classList.remove("modal-open");
+    releaseScreenWakeLock();
+
+    if (!fromPopState && modalHistoryPushed) {
+      modalHistoryPushed = false;
+      try {
+        window.history.back();
+      } catch (_e) {}
+    } else {
+      modalHistoryPushed = false;
+    }
+
     if ((els.searchInput.value || "").trim() === "") {
       renderHomeHubLists();
     }
   }
 
-  function downloadActiveQrPng() {
-    if (!activeQrProduct || !window.QRCodeGenerator) return;
+  function buildActiveQrCanvas() {
+    if (!activeQrProduct || !window.QRCodeGenerator) return null;
     const matrix = window.QRCodeGenerator.generateMatrix(activeQrProduct.codigo);
     const n = matrix.length;
     const quiet = 4;
@@ -1668,12 +2081,61 @@
       qrSide + 64
     );
 
+    return canvas;
+  }
+
+  function downloadActiveQrPng() {
+    const canvas = buildActiveQrCanvas();
+    if (!canvas || !activeQrProduct) return;
     const link = document.createElement("a");
     link.download = "QR-" + activeQrProduct.codigo + ".png";
     link.href = canvas.toDataURL("image/png");
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  }
+
+  async function shareActiveQrProduct() {
+    if (!activeQrProduct) return;
+    const shareText =
+      activeQrProduct.nome +
+      "\nSKU: " +
+      activeQrProduct.codigo +
+      " | Cor: " +
+      activeQrProduct.cor +
+      " | Tam: " +
+      activeQrProduct.tamanho;
+
+    if (navigator.share) {
+      try {
+        const canvas = buildActiveQrCanvas();
+        if (canvas && typeof canvas.toBlob === "function") {
+          const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+          if (blob && typeof File !== "undefined") {
+            const file = new File([blob], "QR-" + activeQrProduct.codigo + ".png", { type: "image/png" });
+            if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+              await navigator.share({
+                title: "BuscaSKU — " + activeQrProduct.codigo,
+                text: shareText,
+                files: [file],
+              });
+              return;
+            }
+          }
+        }
+        await navigator.share({
+          title: "BuscaSKU — " + activeQrProduct.codigo,
+          text: shareText,
+        });
+        return;
+      } catch (err) {
+        if (err && err.name === "AbortError") return;
+      }
+    }
+
+    // Fallback: copia resumo formatado para colar no WhatsApp
+    copySkuToClipboard(shareText, null);
+    showToast("Resumo do produto copiado p/ colar no WhatsApp!");
   }
 
   /**
@@ -1852,7 +2314,8 @@
     const validRecent = recentSkus
       .filter((s) => !pinnedSet.has(s))
       .map((s) => productBySku.get(s))
-      .filter(Boolean);
+      .filter(Boolean)
+      .slice(0, MAX_RECENT_ITEMS);
 
     els.recentSection.hidden = validRecent.length === 0;
     els.recentList.innerHTML = "";
@@ -1975,6 +2438,32 @@
     infoCol.appendChild(metaTopRow);
     infoCol.appendChild(titleEl);
     infoCol.appendChild(detailsList);
+
+    // Indicador rápido de outras cores do mesmo modelo (base 6 dígitos)
+    if (currentVariant.codigoBase6 && currentVariant.codigoBase6.length === 6) {
+      const sameModel = siblingsByBase6.get(currentVariant.codigoBase6) || [];
+      const distinctColors = new Set();
+      for (let c = 0; c < sameModel.length; c++) {
+        distinctColors.add(sameModel[c].codigoBase8);
+      }
+      if (distinctColors.size > 1) {
+        const extraCount = distinctColors.size - 1;
+        const colorsBtn = document.createElement("button");
+        colorsBtn.type = "button";
+        colorsBtn.className = "card-colors-btn";
+        colorsBtn.title = "Ver outras cores disponíveis deste modelo";
+        colorsBtn.innerHTML =
+          '<span class="card-colors-dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
+          "<span>+" +
+          extraCount +
+          (extraCount === 1 ? " cor" : " cores") +
+          "</span>";
+        colorsBtn.addEventListener("click", function () {
+          openQrModalForProduct(currentVariant, false, "photo");
+        });
+        infoCol.appendChild(colorsBtn);
+      }
+    }
 
     topSection.appendChild(imageBox);
     topSection.appendChild(infoCol);
@@ -2192,15 +2681,58 @@
     }
 
     els.searchInput.addEventListener("focus", function () {
-      renderRecentSearchesDropdown();
+      originalTypedQuery = els.searchInput.value;
+      renderSearchDropdown();
+    });
+
+    els.searchInput.addEventListener("blur", function () {
+      clearGhostCompletion();
+    });
+
+    els.searchInput.addEventListener("scroll", function () {
+      if (els.searchInput.scrollLeft > 0) clearGhostCompletion();
+    });
+
+    els.searchInput.addEventListener("keydown", function (ev) {
+      // Tab ou Seta Direita no fim do texto aceita o autocompletar fantasma estilo Google!
+      if (
+        (ev.key === "Tab" || (ev.key === "ArrowRight" && els.searchInput.selectionStart === els.searchInput.value.length)) &&
+        currentGhostRest
+      ) {
+        ev.preventDefault();
+        els.searchInput.value = els.searchInput.value + currentGhostRest;
+        originalTypedQuery = els.searchInput.value;
+        renderSearchDropdown();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        executeSearch(false);
+        return;
+      }
+
+      if (
+        (ev.key === "ArrowDown" || ev.key === "ArrowUp") &&
+        els.recentSearchesDropdown &&
+        !els.recentSearchesDropdown.hidden &&
+        currentDropdownItems.length > 0
+      ) {
+        ev.preventDefault();
+        clearGhostCompletion();
+        if (ev.key === "ArrowDown") {
+          activeDropdownIdx = activeDropdownIdx + 1 >= currentDropdownItems.length ? -1 : activeDropdownIdx + 1;
+        } else {
+          activeDropdownIdx = activeDropdownIdx - 1 < -1 ? currentDropdownItems.length - 1 : activeDropdownIdx - 1;
+        }
+        els.searchInput.value = activeDropdownIdx >= 0 ? currentDropdownItems[activeDropdownIdx] : originalTypedQuery;
+        syncDropdownHighlight();
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+          executeSearch(false);
+        }, 120);
+      }
     });
 
     els.searchInput.addEventListener("input", function () {
-      if (els.searchInput.value.trim().length === 0) {
-        renderRecentSearchesDropdown();
-      } else {
-        hideRecentSearchesDropdown();
-      }
+      originalTypedQuery = els.searchInput.value;
+      renderSearchDropdown();
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         executeSearch(false);
@@ -2228,10 +2760,11 @@
 
     els.clearSearchBtn.addEventListener("click", function () {
       els.searchInput.value = "";
+      originalTypedQuery = "";
       els.searchInput.focus();
       if (debounceTimer) clearTimeout(debounceTimer);
       executeSearch(false);
-      renderRecentSearchesDropdown();
+      renderSearchDropdown();
     });
 
     const onDropdownChange = function () {
@@ -2300,6 +2833,7 @@
           // Só recolhe o cabeçalho quando há conteúdo suficiente para rolar sem causar salto/loop
           if (delta > 16 && currentY > 56 && maxScroll > 160) {
             if (isFiltersDrawerOpen) setFiltersDrawerOpen(false);
+            if (els.recentSearchesDropdown && !els.recentSearchesDropdown.hidden) hideRecentSearchesDropdown();
             if (els.topHeader && !isCollapsed) {
               els.topHeader.classList.add("is-scrolled-down");
               ignoreScrollUntil = Date.now() + 300;
@@ -2338,11 +2872,23 @@
       }
     }
 
-    // Modal de QR Code + Fixar no modal
-    els.qrModalClose.addEventListener("click", closeQrModal);
-    els.qrModal.addEventListener("click", function (ev) {
-      if (ev.target === els.qrModal) closeQrModal();
+    // Modal de QR Code + Foto Ampliada + Compartilhar + Botão Voltar do celular
+    els.qrModalClose.addEventListener("click", function () {
+      closeQrModal(false);
     });
+    els.qrModal.addEventListener("click", function (ev) {
+      if (ev.target === els.qrModal) closeQrModal(false);
+    });
+    if (els.modalTabQr) {
+      els.modalTabQr.addEventListener("click", function () {
+        setModalViewTab("qr");
+      });
+    }
+    if (els.modalTabPhoto) {
+      els.modalTabPhoto.addEventListener("click", function () {
+        setModalViewTab("photo");
+      });
+    }
     els.qrModalSkuBtn.addEventListener("click", function () {
       if (activeQrProduct) copySkuToClipboard(activeQrProduct.codigo, els.qrModalSkuBtn);
     });
@@ -2355,7 +2901,24 @@
         showToast(nowPinned ? "Fixado nos Itens de Balcão ★" : "Removido dos Fixados");
       });
     }
+    if (els.qrShareBtn) {
+      els.qrShareBtn.addEventListener("click", shareActiveQrProduct);
+    }
     els.qrDownloadBtn.addEventListener("click", downloadActiveQrPng);
+
+    window.addEventListener("popstate", function () {
+      if (els.qrModal && !els.qrModal.hidden) {
+        closeQrModal(true);
+      }
+    });
+
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "visible" && els.qrModal && !els.qrModal.hidden) {
+        requestScreenWakeLock();
+      } else if (document.visibilityState !== "visible") {
+        releaseScreenWakeLock();
+      }
+    });
 
     // Zoom no QR Code: scroll do mouse (desktop), pinça com 2 dedos (mobile) e duplo clique/toque
     if (els.qrCanvasBox) {
@@ -2523,10 +3086,127 @@
     listEl.appendChild(frag);
   }
 
+  function setupVoiceSearch() {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec || !els.voiceSearchBtn || !els.searchForm) return;
+
+    els.voiceSearchBtn.hidden = false;
+    els.searchForm.classList.add("has-voice-btn");
+
+    let recognition = null;
+    let isListening = false;
+
+    els.voiceSearchBtn.addEventListener("click", function () {
+      if (isListening && recognition) {
+        try {
+          recognition.stop();
+        } catch (_e) {}
+        return;
+      }
+
+      try {
+        recognition = new SpeechRec();
+        recognition.lang = "pt-BR";
+        recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
+
+        recognition.onstart = function () {
+          isListening = true;
+          els.voiceSearchBtn.classList.add("is-listening");
+          showToast("Ouvindo... fale o produto, cor ou tamanho");
+        };
+
+        recognition.onresult = function (event) {
+          let transcript = "";
+          for (let i = 0; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+          }
+          const clean = transcript.trim();
+          if (clean) {
+            els.searchInput.value = clean;
+            originalTypedQuery = clean;
+            hideRecentSearchesDropdown();
+            if (debounceTimer) clearTimeout(debounceTimer);
+            executeSearch(false);
+          }
+        };
+
+        recognition.onerror = function (ev) {
+          if (ev && ev.error === "not-allowed") {
+            showToast("Permita o microfone no navegador para usar busca por voz");
+          }
+        };
+
+        recognition.onend = function () {
+          isListening = false;
+          els.voiceSearchBtn.classList.remove("is-listening");
+          if (els.searchInput.value.trim().length >= 2) {
+            recordRecentSearch(els.searchInput.value);
+          }
+        };
+
+        recognition.start();
+      } catch (_err) {
+        isListening = false;
+        els.voiceSearchBtn.classList.remove("is-listening");
+      }
+    });
+  }
+
+  function setupPwaFeatures() {
+    // Indicador de status offline em tempo real
+    const syncOnlineStatus = function () {
+      if (!els.offlineBadge) return;
+      els.offlineBadge.hidden = navigator.onLine !== false;
+    };
+    syncOnlineStatus();
+    window.addEventListener("online", syncOnlineStatus);
+    window.addEventListener("offline", function () {
+      syncOnlineStatus();
+      showToast("Sem internet — operando em modo offline");
+    });
+
+    // Botão nativo de instalação do PWA
+    window.addEventListener("beforeinstallprompt", function (ev) {
+      ev.preventDefault();
+      deferredInstallPrompt = ev;
+      if (els.installPwaBtn) els.installPwaBtn.hidden = false;
+    });
+
+    if (els.installPwaBtn) {
+      els.installPwaBtn.addEventListener("click", async function () {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        try {
+          await deferredInstallPrompt.userChoice;
+        } catch (_e) {}
+        deferredInstallPrompt = null;
+        els.installPwaBtn.hidden = true;
+      });
+    }
+
+    window.addEventListener("appinstalled", function () {
+      deferredInstallPrompt = null;
+      if (els.installPwaBtn) els.installPwaBtn.hidden = true;
+      showToast("BuscaSKU instalado na tela inicial!");
+    });
+
+    // Registro do Service Worker offline-first
+    if ("serviceWorker" in navigator && (window.isSecureContext || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("./sw.js").catch(function () {
+          // Ignorado caso rodando via file:// ou HTTP na rede local
+        });
+      });
+    }
+  }
+
   async function init() {
     loadUserPreferences();
     renderRandomQuickSuggestions();
     setupEventListeners();
+    setupVoiceSearch();
+    setupPwaFeatures();
     try {
       await loadInitialCatalog();
       executeSearch(true);
